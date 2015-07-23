@@ -1,5 +1,5 @@
 name:               consumers
-version:            0.1
+version:            1.0
 synopsis:           Concurrent PostgreSQL data consumers
 description:        Library for setting up concurrent consumers of data stored inside PostgreSQL database in a simple, declarative manner.
 homepage:           https://github.com/scrive/consumers
@@ -41,6 +41,7 @@ library
 
   default-language: Haskell2010
   default-extensions:
+    DeriveDataTypeable,
     FlexibleContexts,
     GeneralizedNewtypeDeriving,
     OverloadedStrings,
