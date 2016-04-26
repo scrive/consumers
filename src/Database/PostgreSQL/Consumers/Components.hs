@@ -20,7 +20,6 @@ import Data.Monoid
 import Data.Monoid.Utils
 import Database.PostgreSQL.PQTypes
 import Log
-import Log.Class.Instances ()
 import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.Thread.Lifted as T
 import qualified Data.Foldable as F
