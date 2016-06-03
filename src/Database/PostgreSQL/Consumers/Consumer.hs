@@ -11,6 +11,7 @@ import Data.Int
 import Data.Monoid
 import Data.Monoid.Utils
 import Database.PostgreSQL.PQTypes
+import Prelude
 
 import Database.PostgreSQL.Consumers.Config
 

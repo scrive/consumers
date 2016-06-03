@@ -8,6 +8,7 @@ module Database.PostgreSQL.Consumers.Config (
 import Control.Exception (SomeException)
 import Data.Time
 import Database.PostgreSQL.PQTypes
+import Prelude
 
 -- | Action to take after a job was processed.
 data Action
