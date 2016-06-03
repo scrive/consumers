@@ -43,11 +43,15 @@ runConsumer cc cs = do
   runningJobsInfo <- liftBase $ newTVarIO M.empty
   runningJobs <- liftBase $ newTVarIO 0
 
+  skipLockedTest :: Either DBException () <- try . runDBT cs def $
+    runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
+  let useSkipLocked = either (const False) (const True) skipLockedTest
+
   cid <- registerConsumer cc cs
   localData ["consumer_id" .= show cid] $ do
     listener <- spawnListener cc cs semaphore
     monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
-    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc cs cid semaphore runningJobsInfo runningJobs
+    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked cs cid semaphore runningJobsInfo runningJobs
     return . localDomain "finalizer" $ do
       stopExecution listener
       stopExecution dispatcher
@@ -168,13 +172,14 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
 spawnDispatcher
   :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m, Show idx, ToSQL idx)
   => ConsumerConfig m idx job
+  -> Bool
   -> ConnectionSourceM m
   -> ConsumerID
   -> MVar ()
   -> TVar (M.Map ThreadId idx)
   -> TVar Int
   -> m ThreadId
-spawnDispatcher ConsumerConfig{..} cs cid semaphore runningJobsInfo runningJobs =
+spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInfo runningJobs =
   forkP "dispatcher" . forever $ do
     void $ takeMVar semaphore
     loop 1
@@ -223,23 +228,24 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore runningJobsInfo runningJobs 
         reservedJobs :: SQL
         reservedJobs = smconcat [
             "SELECT id FROM" <+> raw ccJobsTable
-            -- Converting id to text and hashing it may seem silly,
-            -- especially when we're dealing with integers in the first
-            -- place, but even in such case the overhead is small enough
-            -- (converting 100k integers to text and hashing them takes
-            -- around 15 ms on i7) to be worth the generality.
-            -- Also: after PostgreSQL 9.5 is released, we can use SELECT
-            -- FOR UPDATE SKIP LOCKED instead of advisory locks (see
-            -- http://michael.otacoo.com/postgresql-2/postgres-9-5-feature-highlight-skip-locked-row-level/
-            -- for more details). Also, note that even if IDs of two
-            -- pending jobs produce the same hash, it just means that
-            -- in the worst case they will be processed by the same consumer.
-          , "WHERE pg_try_advisory_xact_lock(" <?> unRawSQL ccJobsTable <> "::regclass::integer, hashtext(id::text))"
-          , "  AND reserved_by IS NULL"
-          , "  AND run_at IS NOT NULL"
-          , "  AND run_at <= now()"
+            -- Converting id to text and hashing it may seem silly, especially
+            -- when we're dealing with integers in the first place, but even in
+            -- such case the overhead is small enough (converting 100k integers
+            -- to text and hashing them takes around 15 ms on i7) to be worth
+            -- the generality. Note that even if IDs of two pending jobs produce
+            -- the same hash, it just means that in the worst case they will be
+            -- processed by the same consumer.
+          , if useSkipLocked
+            then "WHERE TRUE"
+            else "WHERE pg_try_advisory_xact_lock(" <?> unRawSQL ccJobsTable <> "::regclass::integer, hashtext(id::text))"
+          , "       AND reserved_by IS NULL"
+          , "       AND run_at IS NOT NULL"
+          , "       AND run_at <= now()"
           , "LIMIT" <?> limit
-          , "FOR UPDATE"
+            -- Use SKIP LOCKED if available. Otherwise utilize advisory locks.
+          , if useSkipLocked
+            then "FOR UPDATE SKIP LOCKED"
+            else "FOR UPDATE"
           ]
 
     -- | Spawn each job in a separate thread.
