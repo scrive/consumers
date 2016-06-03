@@ -1,5 +1,5 @@
 name:               consumers
-version:            1.1
+version:            2.0
 synopsis:           Concurrent PostgreSQL data consumers
 description:        Library for setting up concurrent consumers of data stored inside PostgreSQL database in a simple, declarative manner.
 homepage:           https://github.com/scrive/consumers
@@ -25,7 +25,7 @@ library
   build-depends:    base <5,
                     containers,
                     exceptions,
-                    hpqtypes >=1.4,
+                    hpqtypes >=1.5,
                     lifted-base,
                     lifted-threads,
                     log >= 0.4,

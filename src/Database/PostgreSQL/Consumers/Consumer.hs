@@ -32,7 +32,7 @@ instance Show ConsumerID where
 registerConsumer
   :: (MonadBase IO m, MonadMask m)
   => ConsumerConfig n idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> m ConsumerID
 registerConsumer ConsumerConfig{..} cs = runDBT cs ts $ do
   runSQL_ $ smconcat [
@@ -50,7 +50,7 @@ registerConsumer ConsumerConfig{..} cs = runDBT cs ts $ do
 unregisterConsumer
   :: (MonadBase IO m, MonadMask m)
   => ConsumerConfig n idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> ConsumerID
   -> m ()
 unregisterConsumer ConsumerConfig{..} cs wid = runDBT cs ts $ do

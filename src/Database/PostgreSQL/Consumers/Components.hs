@@ -36,7 +36,7 @@ import Database.PostgreSQL.Consumers.Utils
 runConsumer
   :: (MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx, ToSQL idx)
   => ConsumerConfig m idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> m (m ())
 runConsumer cc cs = do
   semaphore <- newMVar ()
@@ -83,7 +83,7 @@ runConsumer cc cs = do
 spawnListener
   :: (MonadBaseControl IO m, MonadMask m)
   => ConsumerConfig m idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> MVar ()
   -> m ThreadId
 spawnListener cc cs semaphore = forkP "listener" $ case ccNotificationChannel cc of
@@ -110,7 +110,7 @@ spawnListener cc cs semaphore = forkP "listener" $ case ccNotificationChannel cc
 spawnMonitor
   :: (MonadBaseControl IO m, MonadLog m, MonadMask m)
   => ConsumerConfig m idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> ConsumerID
   -> m ThreadId
 spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
@@ -168,7 +168,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
 spawnDispatcher
   :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m, Show idx, ToSQL idx)
   => ConsumerConfig m idx job
-  -> ConnectionSource
+  -> ConnectionSourceM m
   -> ConsumerID
   -> MVar ()
   -> TVar (M.Map ThreadId idx)
