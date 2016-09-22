@@ -10,7 +10,8 @@ homepage:           https://github.com/scrive/consumers
 license:            BSD3
 license-file:       LICENSE
 author:             Scrive AB
-maintainer:         Andrzej Rybczak <andrzej@rybczak.net>, Jonathan Jouty <jonathan@scrive.com>
+maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
+                    Jonathan Jouty <jonathan@scrive.com>
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
@@ -19,7 +20,7 @@ tested-with:        GHC == 7.8.4, GHC == 7.10.3, GHC == 8.0.1
 
 Source-repository head
   Type:             git
-  Location:         https://github.com/scrive/consumers
+  Location:         https://github.com/scrive/consumers.git
 
 library
   exposed-modules:  Database.PostgreSQL.Consumers,
