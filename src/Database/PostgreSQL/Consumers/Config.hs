@@ -24,19 +24,20 @@ data Result = Ok Action | Failed Action
 
 -- | Config of a consumer.
 data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
--- | Name of a database table where jobs are stored. The table needs to have
+-- | Name of the database table where jobs are stored. The table needs to have
 -- the following columns in order to be suitable for acting as a job queue:
 --
--- * id - represents ID of the job. Needs to be a primary key of the type
+-- * id - represents ID of the job. Needs to be a primary key of a type
 -- convertible to text, not nullable.
 --
--- * run_at - represents the time at which the job will be processed. Needs
--- to be nullable, of the type comparable with now() (TIMESTAMPTZ is recommended).
+-- * run_at - represents the time at which the job will be
+-- processed. Needs to be nullable, of a type comparable with now()
+-- (TIMESTAMPTZ is recommended).
 -- Note: a job with run_at set to NULL is never picked for processing. Useful
 -- for storing already processed/expired jobs for debugging purposes.
 --
 -- * finished_at - represents the time at which job processing was finished.
--- Needs to be nullable, of the type you can assign now() to (TIMESTAMPTZ is
+-- Needs to be nullable, of a type you can assign now() to (TIMESTAMPTZ is
 -- recommended). NULL means that the job was either never processed or that
 -- it was started and failed at least once.
 --
@@ -70,7 +71,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- and these jobs stay locked forever, yet are never processed.
 --
 , ccConsumersTable        :: !(RawSQL ())
--- | Fields needed to be selected from the jobs table in order to assemble a job.
+-- | Fields needed to be selected from the jobs table in order to
+-- assemble a job.
 , ccJobSelectors          :: ![SQL]
 -- | Function that transforms the list of fields into a job.
 , ccJobFetcher            :: !(row -> job)
