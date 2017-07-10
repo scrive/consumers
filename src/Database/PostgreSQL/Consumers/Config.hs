@@ -7,8 +7,13 @@ module Database.PostgreSQL.Consumers.Config (
 
 import Control.Exception (SomeException)
 import Data.Time
-import Database.PostgreSQL.PQTypes
 import Prelude
+
+import Database.PostgreSQL.PQTypes.FromRow
+import Database.PostgreSQL.PQTypes.Interval
+import Database.PostgreSQL.PQTypes.Notification
+import Database.PostgreSQL.PQTypes.SQL
+import Database.PostgreSQL.PQTypes.SQL.Raw
 
 -- | Action to take after a job was processed.
 data Action
@@ -96,7 +101,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 , ccMaxRunningJobs        :: !Int
 -- | Function that processes a job.
 , ccProcessJob            :: !(job -> m Result)
--- | Action taken if job processing function throws an exception.
+-- | Action taken if a job processing function throws an exception.
 -- Note that if this action throws an exception, the consumer goes
 -- down, so it's best to ensure that it doesn't throw.
 , ccOnException           :: !(SomeException -> job -> m Action)
