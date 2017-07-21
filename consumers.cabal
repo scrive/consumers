@@ -9,6 +9,7 @@ description:        Library for setting up concurrent consumers of data
 homepage:           https://github.com/scrive/consumers
 license:            BSD3
 license-file:       LICENSE
+extra-source-files: CHANGELOG.md, README.md
 author:             Scrive AB
 maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
                     Jonathan Jouty <jonathan@scrive.com>
