@@ -35,7 +35,7 @@ library
                     hpqtypes >=1.5,
                     lifted-base,
                     lifted-threads,
-                    log >= 0.5,
+                    log-base >= 0.7,
                     monad-control,
                     mtl,
                     stm,
