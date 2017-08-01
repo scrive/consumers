@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.0.0.1
+version:            2.0.0.2
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -59,3 +59,19 @@ library
                     , TupleSections
                     , TypeFamilies
                     , UndecidableInstances
+
+test-suite consumers-example
+  -- Not quite a test suite, just a lazy way to disable this component
+  -- by default, but have Travis build it.
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     example
+  main-is:            Example.hs
+  default-language:   Haskell2010
+  ghc-options:        -Wall
+  build-depends:      base,
+                      consumers,
+                      hpqtypes,
+                      hpqtypes-extras,
+                      log-base,
+                      text,
+                      text-show
