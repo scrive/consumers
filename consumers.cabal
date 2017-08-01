@@ -74,4 +74,5 @@ test-suite consumers-example
                       hpqtypes-extras,
                       log-base,
                       text,
-                      text-show
+                      text-show,
+                      transformers
