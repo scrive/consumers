@@ -42,8 +42,9 @@ main = do
         createTables
         finalize (localDomain "process" $
                   runConsumer consumerConfig connSource) $ do
-          forever $ do putJob
-                       liftIO $ threadDelay (1 * 1000000) -- 1 sec
+          forM_ [(0::Int)..10] $ \_ -> do
+            putJob
+            liftIO $ threadDelay (1 * 1000000) -- 1 sec
 
     where
 
