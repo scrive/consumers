@@ -48,8 +48,7 @@ main = do
     where
 
       defaultConnString =
-        "host='localhost' user='consumers' password='consumers' "
-        ++ "dbname='consumers_example'"
+        "postgresql://postgres@localhost/travis_ci_test"
 
       tables     = [consumersTable, jobsTable]
       -- NB: order of migrations is important.
