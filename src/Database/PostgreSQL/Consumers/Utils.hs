@@ -16,7 +16,8 @@ import qualified Control.Concurrent.Thread.Group.Lifted as TG
 import qualified Control.Concurrent.Thread.Lifted as T
 import qualified Control.Exception.Lifted as E
 
--- | Runs an action that returns a finalizer and performs it at the end.
+-- | Run an action 'm' that returns a finalizer and perform the
+-- returned finalizer after the action 'action' completes.
 finalize :: (MonadMask m, MonadBase IO m) => m (m ()) -> m a -> m a
 finalize m action = do
   finalizer <- newEmptyMVar

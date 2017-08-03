@@ -35,7 +35,8 @@ import Database.PostgreSQL.Consumers.Utils
 -- This function is best used in conjunction with 'finalize' to
 -- seamlessly handle the finalization.
 runConsumer
-  :: (MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx, ToSQL idx)
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+     , ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> m (m ())
@@ -52,7 +53,8 @@ runConsumer cc cs = do
   localData ["consumer_id" .= show cid] $ do
     listener <- spawnListener cc cs semaphore
     monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
-    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked cs cid semaphore runningJobsInfo runningJobs
+    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
+      cs cid semaphore runningJobsInfo runningJobs
     return . localDomain "finalizer" $ do
       stopExecution listener
       stopExecution dispatcher
@@ -91,17 +93,21 @@ spawnListener
   -> ConnectionSourceM m
   -> MVar ()
   -> m ThreadId
-spawnListener cc cs semaphore = forkP "listener" $ case ccNotificationChannel cc of
-  Just chan -> runDBT cs noTs . bracket_ (listen chan) (unlisten chan) . forever $ do
-    -- If there are many notifications, we need to collect them
-    -- as soon as possible, because they are stored in memory by
-    -- libpq. They are also not squashed, so we perform the
-    -- squashing ourselves with the help of MVar ().
-    void . getNotification $ ccNotificationTimeout cc
-    lift signalDispatcher
-  Nothing -> forever $ do
-    liftBase . threadDelay $ ccNotificationTimeout cc
-    signalDispatcher
+spawnListener cc cs semaphore =
+  forkP "listener" $
+  case ccNotificationChannel cc of
+    Just chan ->
+      runDBT cs noTs . bracket_ (listen chan) (unlisten chan)
+      . forever $ do
+      -- If there are many notifications, we need to collect them
+      -- as soon as possible, because they are stored in memory by
+      -- libpq. They are also not squashed, so we perform the
+      -- squashing ourselves with the help of MVar ().
+      void . getNotification $ ccNotificationTimeout cc
+      lift signalDispatcher
+    Nothing -> forever $ do
+      liftBase . threadDelay $ ccNotificationTimeout cc
+      signalDispatcher
   where
     signalDispatcher = do
       liftBase $ tryPutMVar semaphore ()
@@ -171,7 +177,8 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
 
 -- | Spawn a thread that reserves and processes jobs.
 spawnDispatcher
-  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m, Show idx, ToSQL idx)
+  :: forall m idx job. ( MonadBaseControl IO m, MonadLog m, MonadMask m
+                       , Show idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> Bool
   -> ConnectionSourceM m
@@ -180,7 +187,8 @@ spawnDispatcher
   -> TVar (M.Map ThreadId idx)
   -> TVar Int
   -> m ThreadId
-spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInfo runningJobs =
+spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
+  runningJobsInfo runningJobs =
   forkP "dispatcher" . forever $ do
     void $ takeMVar semaphore
     loop 1
@@ -201,7 +209,8 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInf
           atomically $ modifyTVar' runningJobs (+batchSize)
           let subtractJobs = atomically $ do
                 modifyTVar' runningJobs (subtract batchSize)
-          void . forkP "batch processor" . (`finally` subtractJobs) . restore $ do
+          void . forkP "batch processor"
+            . (`finally` subtractJobs) . restore $ do
             mapM startJob batch >>= mapM joinJob >>= updateJobs
 
         when (batchSize == limit) $ do
@@ -229,21 +238,25 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInf
         reservedJobs :: SQL
         reservedJobs = smconcat [
             "SELECT id FROM" <+> raw ccJobsTable
-            -- Converting id to text and hashing it may seem silly, especially
-            -- when we're dealing with integers in the first place, but even in
-            -- such case the overhead is small enough (converting 100k integers
-            -- to text and hashing them takes around 15 ms on i7) to be worth
-            -- the generality. Note that even if IDs of two pending jobs produce
-            -- the same hash, it just means that in the worst case they will be
-            -- processed by the same consumer.
+            -- Converting id to text and hashing it may seem silly,
+            -- especially when we're dealing with integers in the
+            -- first place, but even in such case the overhead is
+            -- small enough (converting 100k integers to text and
+            -- hashing them takes around 15 ms on i7) to be worth the
+            -- generality. Note that even if IDs of two pending jobs
+            -- produce the same hash, it just means that in the worst
+            -- case they will be processed by the same consumer.
           , if useSkipLocked
             then "WHERE TRUE"
-            else "WHERE pg_try_advisory_xact_lock(" <?> unRawSQL ccJobsTable <> "::regclass::integer, hashtext(id::text))"
+            else "WHERE pg_try_advisory_xact_lock("
+                 <?> unRawSQL ccJobsTable
+                 <> "::regclass::integer, hashtext(id::text))"
           , "       AND reserved_by IS NULL"
           , "       AND run_at IS NOT NULL"
           , "       AND run_at <= now()"
           , "LIMIT" <?> limit
-            -- Use SKIP LOCKED if available. Otherwise utilize advisory locks.
+            -- Use SKIP LOCKED if available. Otherwise utilise
+            -- advisory locks.
           , if useSkipLocked
             then "FOR UPDATE SKIP LOCKED"
             else "FOR UPDATE"
@@ -269,7 +282,8 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInf
       Right result -> return (ccJobIndex job, result)
       Left ex -> do
         action <- ccOnException ex job
-        logAttention "Unexpected exception caught while processing job" $ object [
+        logAttention "Unexpected exception caught while processing job" $
+          object [
             "job_id" .= show (ccJobIndex job)
           , "exception" .= show ex
           , "action" .= show action
@@ -313,7 +327,8 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore runningJobsInf
               MarkProcessed  -> iretries
               RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
               RerunAt time   -> M.insertWith (++) (Right time) [idx] iretries
-              Remove         -> error "updateJobs: Remove should've been filtered out"
+              Remove         -> error
+                "updateJobs: Remove should've been filtered out"
 
         successes = foldr step [] updates
           where
