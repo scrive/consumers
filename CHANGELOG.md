@@ -1,4 +1,4 @@
-# consumers-2.0.1.0 (2017-09-15)
+# consumers-2.1.0.0 (2017-09-15)
 * Now uses MonadTime instead of IO for current time. Also stop using "now()"
   in SQL. This allows controlling time from outside for testing.
 * Add runConsumerWithIdleSignal for signaling outside, that consumer is
