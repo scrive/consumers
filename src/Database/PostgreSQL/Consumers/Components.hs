@@ -1,5 +1,6 @@
 module Database.PostgreSQL.Consumers.Components (
     runConsumer
+  , runConsumerWithIdleSignal
   , spawnListener
   , spawnMonitor
   , spawnDispatcher
@@ -12,10 +13,13 @@ import Control.Exception (AsyncException(ThreadKilled))
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
+import Control.Monad.Extra
+import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
 import Data.Function
 import Data.Int
+import Data.Maybe
 import Data.Monoid
 import Data.Monoid.Utils
 import Database.PostgreSQL.PQTypes
@@ -40,7 +44,28 @@ runConsumer
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> m (m ())
-runConsumer cc cs = do
+runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
+
+runConsumerWithIdleSignal
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+     , ToSQL idx )
+  => ConsumerConfig m idx job
+  -> ConnectionSourceM m
+  -> TMVar Bool
+  -> m (m ())
+runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc cs (Just idleSignal)
+
+-- | Run the consumer and also signal whenever the consumer is waiting for
+-- getNotification or threadDelay.
+
+runConsumerWithMaybeIdleSignal
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+     , ToSQL idx )
+  => ConsumerConfig m idx job
+  -> ConnectionSourceM m
+  -> Maybe (TMVar Bool)
+  -> m (m ())
+runConsumerWithMaybeIdleSignal cc cs mIdleSignal = do
   semaphore <- newMVar ()
   runningJobsInfo <- liftBase $ newTVarIO M.empty
   runningJobs <- liftBase $ newTVarIO 0
@@ -54,7 +79,7 @@ runConsumer cc cs = do
     listener <- spawnListener cc cs semaphore
     monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
     dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
-      cs cid semaphore runningJobsInfo runningJobs
+      cs cid semaphore runningJobsInfo runningJobs mIdleSignal
     return . localDomain "finalizer" $ do
       stopExecution listener
       stopExecution dispatcher
@@ -126,10 +151,11 @@ spawnMonitor
   -> m ThreadId
 spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
   runDBT cs ts $ do
+    now <- currentTime
     -- Update last_activity of the consumer.
     ok <- runSQL01 $ smconcat [
         "UPDATE" <+> raw ccConsumersTable
-      , "SET last_activity = now()"
+      , "SET last_activity = " <?> now
       , "WHERE id =" <?> cid
       , "  AND name =" <?> unRawSQL ccJobsTable
       ]
@@ -143,10 +169,11 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
   -- it was already marked as reserved by other consumer, so let's
   -- run it in serializable transaction.
   (inactiveConsumers, freedJobs) <- runDBT cs tsSerializable $ do
+    now <- currentTime
     -- Delete all inactive (assumed dead) consumers and get their ids.
     runSQL_ $ smconcat [
         "DELETE FROM" <+> raw ccConsumersTable
-      , "  WHERE last_activity +" <?> iminutes 1 <+> "<= now()"
+      , "  WHERE last_activity +" <?> iminutes 1 <+> "<= " <?> now
       , "    AND name =" <?> unRawSQL ccJobsTable
       , "  RETURNING id::bigint"
       ]
@@ -177,7 +204,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
 
 -- | Spawn a thread that reserves and processes jobs.
 spawnDispatcher
-  :: forall m idx job. ( MonadBaseControl IO m, MonadLog m, MonadMask m
+  :: forall m idx job. ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m
                        , Show idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> Bool
@@ -186,14 +213,23 @@ spawnDispatcher
   -> MVar ()
   -> TVar (M.Map ThreadId idx)
   -> TVar Int
+  -> Maybe (TMVar Bool)
   -> m ThreadId
 spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
-  runningJobsInfo runningJobs =
+  runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
     void $ takeMVar semaphore
-    loop 1
+    ifM (loop 1) (setIdle False) (setIdle True)
   where
-    loop :: Int -> m ()
+    setIdle :: forall m' . (MonadBaseControl IO m') => Bool -> m' ()
+    setIdle isIdle = case mIdleSignal of
+      Nothing -> return ()
+      Just idleSignal -> do
+        atomically $ do
+          _ <- tryTakeTMVar idleSignal
+          putTMVar idleSignal isIdle
+
+    loop :: Int -> m Bool
     loop limit = do
       (batch, batchSize) <- reserveJobs limit
       when (batchSize > 0) $ do
@@ -218,10 +254,13 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
             jobs <- readTVar runningJobs
             when (jobs >= ccMaxRunningJobs) retry
             return $ ccMaxRunningJobs - jobs
-          loop $ min maxBatchSize (2*limit)
+          void $ loop $ min maxBatchSize (2*limit)
+
+      return (batchSize > 0)
 
     reserveJobs :: Int -> m ([job], Int)
     reserveJobs limit = runDBT cs ts $ do
+      now <- currentTime
       n <- runSQL $ smconcat [
           "UPDATE" <+> raw ccJobsTable <+> "SET"
         , "  reserved_by =" <?> cid
@@ -229,14 +268,14 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
         , "    WHEN finished_at IS NULL THEN attempts + 1"
         , "    ELSE 1"
         , "  END"
-        , "WHERE id IN (" <> reservedJobs <> ")"
+        , "WHERE id IN (" <> reservedJobs now <> ")"
         , "RETURNING" <+> mintercalate ", " ccJobSelectors
         ]
       -- Decode lazily as we want the transaction to be as short as possible.
       (, n) . F.toList . fmap ccJobFetcher <$> queryResult
       where
-        reservedJobs :: SQL
-        reservedJobs = smconcat [
+        reservedJobs :: UTCTime -> SQL
+        reservedJobs now = smconcat [
             "SELECT id FROM" <+> raw ccJobsTable
             -- Converting id to text and hashing it may seem silly,
             -- especially when we're dealing with integers in the
@@ -253,7 +292,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
                  <> "::regclass::integer, hashtext(id::text))"
           , "       AND reserved_by IS NULL"
           , "       AND run_at IS NOT NULL"
-          , "       AND run_at <= now()"
+          , "       AND run_at <= " <?> now
           , "LIMIT" <?> limit
             -- Use SKIP LOCKED if available. Otherwise utilise
             -- advisory locks.
@@ -293,6 +332,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
     -- | Update status of the jobs.
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
+      now <- currentTime
       runSQL_ $ smconcat [
           "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
@@ -302,19 +342,19 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
         , "  reserved_by = NULL"
         , ", run_at = CASE"
         , "    WHEN FALSE THEN run_at"
-        ,      smconcat $ M.foldrWithKey retryToSQL [] retries
+        ,      smconcat $ M.foldrWithKey (retryToSQL now) [] retries
         , "    ELSE NULL" -- processed
         , "  END"
         , ", finished_at = CASE"
-        , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN now()"
+        , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
         , "    ELSE NULL"
         , "  END"
         , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
         ]
       where
-        retryToSQL (Left int) ids =
-          ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN now() +" <?> int :)
-        retryToSQL (Right time) ids =
+        retryToSQL now (Left int) ids =
+          ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
+        retryToSQL _   (Right time) ids =
           ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
 
         retries = foldr step M.empty $ map f updates

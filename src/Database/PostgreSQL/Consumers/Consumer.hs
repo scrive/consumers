@@ -7,6 +7,7 @@ module Database.PostgreSQL.Consumers.Consumer (
 import Control.Applicative
 import Control.Monad.Base
 import Control.Monad.Catch
+import Control.Monad.Time
 import Data.Int
 import Data.Monoid
 import Data.Monoid.Utils
@@ -27,18 +28,19 @@ instance ToSQL ConsumerID where
 
 instance Show ConsumerID where
   showsPrec p (ConsumerID n) = showsPrec p n
-
+ 
 -- | Register consumer in the consumers table,
 -- so that it can reserve jobs using acquired ID.
 registerConsumer
-  :: (MonadBase IO m, MonadMask m)
+  :: (MonadBase IO m, MonadMask m, MonadTime m)
   => ConsumerConfig n idx job
   -> ConnectionSourceM m
   -> m ConsumerID
 registerConsumer ConsumerConfig{..} cs = runDBT cs ts $ do
+  now <- currentTime
   runSQL_ $ smconcat [
       "INSERT INTO" <+> raw ccConsumersTable
-    , "(name, last_activity) VALUES (" <?> unRawSQL ccJobsTable <> ", now())"
+    , "(name, last_activity) VALUES (" <?> unRawSQL ccJobsTable <> ", " <?> now <> ")"
     , "RETURNING id"
     ]
   fetchOne runIdentity

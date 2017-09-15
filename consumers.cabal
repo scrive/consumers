@@ -33,11 +33,13 @@ library
   build-depends:    base <5,
                     containers,
                     exceptions,
+                    extra,
                     hpqtypes >=1.5,
                     lifted-base,
                     lifted-threads,
                     log-base >= 0.7,
                     monad-control,
+                    monad-time,
                     mtl,
                     stm,
                     time,
@@ -76,3 +78,25 @@ test-suite consumers-example
                       text,
                       text-show,
                       transformers
+
+executable consumers-test
+  hs-source-dirs:     example
+  main-is:            Test.hs
+  default-language:   Haskell2010
+  ghc-options:        -Wall
+  build-depends:      base,
+                      consumers,
+                      exceptions,
+                      hpqtypes,
+                      hpqtypes-extras,
+                      log-base,
+                      monad-control,
+                      monad-loops,
+                      monad-time,
+                      mtl,
+                      stm,
+                      text,
+                      text-show,
+                      time,
+                      transformers,
+                      transformers-base
