@@ -45,6 +45,7 @@ main = do
           forM_ [(0::Int)..10] $ \_ -> do
             putJob
             liftIO $ threadDelay (1 * 1000000) -- 1 sec
+        dropTables
 
     where
 
@@ -61,6 +62,13 @@ main = do
         migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
           tables migrations
         checkDatabase {- domains -} [] tables
+
+      dropTables :: AppM ()
+      dropTables = do
+        migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
+          {- tables -} []
+          [ dropTableMigration jobsTable
+          , dropTableMigration consumersTable ]
 
       consumerConfig = ConsumerConfig
         { ccJobsTable           = "consumers_example_jobs"
@@ -147,4 +155,11 @@ createTableMigration tbl = Migration
   , mgrFrom      = 0
   , mgrAction    = StandardMigration $ do
       createTable True tbl
+  }
+
+dropTableMigration :: Table -> Migration m
+dropTableMigration tbl = Migration
+  { mgrTableName = tblName tbl
+  , mgrFrom      = 1
+  , mgrAction    = DropTableMigration DropTableRestrict
   }

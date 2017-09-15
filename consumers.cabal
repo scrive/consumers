@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.0.0.2
+version:            2.1.0.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -33,11 +33,13 @@ library
   build-depends:    base <5,
                     containers,
                     exceptions,
+                    extra,
                     hpqtypes >=1.5,
                     lifted-base,
                     lifted-threads,
                     log-base >= 0.7,
                     monad-control,
+                    monad-time,
                     mtl,
                     stm,
                     time,
@@ -76,3 +78,27 @@ test-suite consumers-example
                       text,
                       text-show,
                       transformers
+
+test-suite consumers-test
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     test
+  main-is:            Test.hs
+  default-language:   Haskell2010
+  ghc-options:        -Wall
+  build-depends:      base,
+                      consumers,
+                      exceptions,
+                      HUnit,
+                      hpqtypes,
+                      hpqtypes-extras,
+                      log-base,
+                      monad-control,
+                      monad-loops,
+                      monad-time,
+                      mtl,
+                      stm,
+                      text,
+                      text-show,
+                      time,
+                      transformers,
+                      transformers-base
