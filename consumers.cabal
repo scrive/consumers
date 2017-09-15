@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.0.0.2
+version:            2.0.1.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -79,8 +79,9 @@ test-suite consumers-example
                       text-show,
                       transformers
 
-executable consumers-test
-  hs-source-dirs:     example
+test-suite consumers-test
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     test
   main-is:            Test.hs
   default-language:   Haskell2010
   ghc-options:        -Wall

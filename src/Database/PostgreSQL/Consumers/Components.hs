@@ -13,7 +13,6 @@ import Control.Exception (AsyncException(ThreadKilled))
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
-import Control.Monad.Extra
 import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
@@ -219,15 +218,17 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
   runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
     void $ takeMVar semaphore
-    ifM (loop 1) (setIdle False) (setIdle True)
+    someJobWasProcessed <- loop 1
+    if someJobWasProcessed
+      then setIdle False
+      else setIdle True
   where
     setIdle :: forall m' . (MonadBaseControl IO m') => Bool -> m' ()
     setIdle isIdle = case mIdleSignal of
       Nothing -> return ()
-      Just idleSignal -> do
-        atomically $ do
-          _ <- tryTakeTMVar idleSignal
-          putTMVar idleSignal isIdle
+      Just idleSignal -> atomically $ do
+        _ <- tryTakeTMVar idleSignal
+        putTMVar idleSignal isIdle
 
     loop :: Int -> m Bool
     loop limit = do
