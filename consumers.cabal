@@ -88,6 +88,7 @@ test-suite consumers-test
   build-depends:      base,
                       consumers,
                       exceptions,
+                      HUnit,
                       hpqtypes,
                       hpqtypes-extras,
                       log-base,

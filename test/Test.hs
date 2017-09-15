@@ -34,6 +34,7 @@ import System.Environment
 import TextShow
 
 import qualified Data.Text as T
+import qualified Test.HUnit as T
 
 data TestEnvSt = TestEnvSt {
     teCurrentTime :: UTCTime
@@ -66,7 +67,10 @@ runTestEnv connSource logger m =
   $ m
 
 main :: IO ()
-main = do
+main = void $ T.runTestTT $ T.TestCase test
+
+test :: IO ()
+test = do
   args <- getArgs
   let connString = case args of
         []     -> defaultConnString
@@ -100,8 +104,9 @@ main = do
       -- Jobs are designed to double only 10 times, so there should be no jobs left now.
       runSQL_ $ "SELECT COUNT(*) from consumers_test_jobs"
       rowcount1 :: Int64 <- fetchOne runIdentity
-      logInfo_ . T.pack . ("Number of jobs in table after 10 steps (expected 1024): "++) . show $ rowcount0
-      logInfo_ . T.pack . ("Number of jobs in table after 11 steps (expected 0): "++) . show $ rowcount1
+      liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
+      liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
+      dropTables
     where
       waitUntilTrue tmvar = whileM_ (not <$> (liftIO $ atomically $ takeTMVar tmvar)) $ return ()
       defaultConnString =
@@ -117,6 +122,13 @@ main = do
         migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
           tables migrations
         checkDatabase {- domains -} [] tables
+
+      dropTables :: TestEnv ()
+      dropTables = do
+        migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
+          {- tables -} []
+          [ dropTableMigration jobsTable
+          , dropTableMigration consumersTable ]
 
       consumerConfig = ConsumerConfig
         { ccJobsTable           = "consumers_test_jobs"
@@ -205,4 +217,11 @@ createTableMigration tbl = Migration
   , mgrFrom      = 0
   , mgrAction    = StandardMigration $ do
       createTable True tbl
+  }
+
+dropTableMigration :: Table -> Migration m
+dropTableMigration tbl = Migration
+  { mgrTableName = tblName tbl
+  , mgrFrom      = 1
+  , mgrAction    = DropTableMigration DropTableRestrict
   }
