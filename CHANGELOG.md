@@ -1,4 +1,4 @@
-# consumers-2.1.0.0 (2017-09-15)
+# consumers-2.1.0.0 (2017-09-18)
 
 * Added a `MonadTime` constraint to `runConsumer`. The `currentTime`
   method from `MonadTime` is now used instead of `now()` in SQL. This
