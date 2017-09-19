@@ -24,6 +24,8 @@ import TextShow
 
 import qualified Data.Text as T
 
+-- | Main application monad. See the 'log-base' and the 'hpqtypes'
+-- packages for documentation on 'DBT' and 'LogT'.
 type AppM a = DBT (LogT IO) a
 
 main :: IO ()
@@ -36,19 +38,29 @@ main = do
   let connSettings                = def { csConnInfo = T.pack connString }
       ConnectionSource connSource = simpleSource connSettings
 
+  -- Monad stack initialisation.
   withSimpleStdOutLogger $ \logger ->
     runLogT "consumers-example" logger $
     runDBT connSource {- transactionSettings -} def $ do
+
+        -- Initialise.
         createTables
+
+        -- Create a consumer, put ten jobs into its queue, and wait
+        -- for it to finish. 'runConsumer' returns a finaliser that is
+        -- invoked by 'finalize' after the 'putJob' loop.
         finalize (localDomain "process" $
-                  runConsumer consumerConfig connSource) $ do
+                  runConsumer consumerConfig connSource) $
           forM_ [(0::Int)..10] $ \_ -> do
             putJob
             liftIO $ threadDelay (1 * 1000000) -- 1 sec
+
+        -- Clean up.
         dropTables
 
     where
 
+      -- How to connect to DB.
       defaultConnString =
         "postgresql://postgres@localhost/travis_ci_test"
 
@@ -70,6 +82,8 @@ main = do
           [ dropTableMigration jobsTable
           , dropTableMigration consumersTable ]
 
+      -- Configuration of a consumer. See
+      -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.
       consumerConfig = ConsumerConfig
         { ccJobsTable           = "consumers_example_jobs"
         , ccConsumersTable      = "consumers_example_consumers"
@@ -83,6 +97,7 @@ main = do
         , ccOnException         = handleException
         }
 
+      -- Add a job to the consumer's queue.
       putJob :: AppM ()
       putJob = localDomain "put" $ do
         logInfo_ "putJob"
@@ -91,11 +106,15 @@ main = do
           <> "VALUES (NOW(), NULL, NULL, 0, 'hello')"
         commit
 
+      -- Invoked when a job is ready to be processed.
       processJob :: (Int64, T.Text) -> AppM Result
       processJob (_idx, msg) = do
         logInfo_ msg
         return (Ok Remove)
 
+      -- Invoked when 'processJob' throws an exception. Can handle
+      -- failure in different ways, such as: remove the job from the
+      -- queue, mark it as processed, or schedule it for rerun.
       handleException :: SomeException -> (Int64, T.Text) -> AppM Action
       handleException exc (idx, _msg) = do
         logAttention_ $
@@ -103,6 +122,8 @@ main = do
         return . RerunAfter $ imicroseconds 500000
 
 
+-- | Table where jobs are stored. See
+-- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.
 jobsTable :: Table
 jobsTable =
   tblTable
@@ -132,6 +153,8 @@ jobsTable =
     ]
   }
 
+-- | Table where registered consumers are stored. See
+-- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.
 consumersTable :: Table
 consumersTable =
   tblTable
