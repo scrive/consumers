@@ -12,7 +12,8 @@ license-file:       LICENSE
 extra-source-files: CHANGELOG.md, README.md
 author:             Scrive AB
 maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
-                    Jonathan Jouty <jonathan@scrive.com>
+                    Jonathan Jouty <jonathan@scrive.com>,
+                    Mikhail Glushenkov <mikhail@scrive.com>
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
