@@ -1,3 +1,7 @@
+# consumers-2.1.1.0 (2018-03-18)
+
+* GHC 8.4.1 support.
+
 # consumers-2.1.0.0 (2017-09-18)
 
 * Added a `MonadTime` constraint to `runConsumer`. The `currentTime`
