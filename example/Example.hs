@@ -71,13 +71,13 @@ main = do
 
       createTables :: AppM ()
       createTables = do
-        migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
+        migrateDatabase {- options -} def {- extensions -} [] {- domains -} []
           tables migrations
-        checkDatabase {- domains -} [] tables
+        checkDatabase {- options -} def {- domains -} [] tables
 
       dropTables :: AppM ()
       dropTables = do
-        migrateDatabase {- options -} [] {- extensions -} [] {- domains -} []
+        migrateDatabase {- options -} def {- extensions -} [] {- domains -} []
           {- tables -} []
           [ dropTableMigration jobsTable
           , dropTableMigration consumersTable ]
