@@ -1,3 +1,8 @@
+# consumers-2.1.2.0 (2018-07-11)
+
+* Support hpqtypes-1.6.0.0.
+* Drop support for GHC < 8.
+
 # consumers-2.1.1.0 (2018-03-18)
 
 * GHC 8.4.1 support.

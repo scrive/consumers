@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeApplications #-}
 module Database.PostgreSQL.Consumers.Consumer (
     ConsumerID
   , registerConsumer
@@ -18,7 +19,10 @@ import Database.PostgreSQL.Consumers.Config
 
 -- | ID of a consumer.
 newtype ConsumerID = ConsumerID Int64
-  deriving (Eq, Ord, PQFormat)
+  deriving (Eq, Ord)
+
+instance PQFormat ConsumerID where
+  pqFormat = pqFormat @Int64
 instance FromSQL ConsumerID where
   type PQBase ConsumerID = PQBase Int64
   fromSQL mbase = ConsumerID <$> fromSQL mbase
