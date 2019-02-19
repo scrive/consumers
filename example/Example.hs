@@ -19,6 +19,7 @@ import Data.Int
 import Data.Monoid
 import Log
 import Log.Backend.StandardOutput
+import Prelude
 import System.Environment
 import TextShow
 

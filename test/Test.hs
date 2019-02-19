@@ -30,6 +30,7 @@ import Data.Monoid
 import Data.Time
 import Log
 import Log.Backend.StandardOutput
+import Prelude
 import System.Environment
 import TextShow
 
