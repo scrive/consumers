@@ -56,7 +56,6 @@ runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc c
 
 -- | Run the consumer and also signal whenever the consumer is waiting for
 -- getNotification or threadDelay.
-
 runConsumerWithMaybeIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
@@ -64,27 +63,31 @@ runConsumerWithMaybeIdleSignal
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
-runConsumerWithMaybeIdleSignal cc cs mIdleSignal = do
-  semaphore <- newMVar ()
-  runningJobsInfo <- liftBase $ newTVarIO M.empty
-  runningJobs <- liftBase $ newTVarIO 0
+runConsumerWithMaybeIdleSignal cc cs mIdleSignal
+  | ccMaxRunningJobs cc < 1 = do
+      logInfo_ "ccMaxRunningJobs < 1, not starting the consumer"
+      return $ return ()
+  | otherwise = do
+      semaphore <- newMVar ()
+      runningJobsInfo <- liftBase $ newTVarIO M.empty
+      runningJobs <- liftBase $ newTVarIO 0
 
-  skipLockedTest :: Either DBException () <- try . runDBT cs def $
-    runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
-  let useSkipLocked = either (const False) (const True) skipLockedTest
+      skipLockedTest :: Either DBException () <- try . runDBT cs def $
+        runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
+      let useSkipLocked = either (const False) (const True) skipLockedTest
 
-  cid <- registerConsumer cc cs
-  localData ["consumer_id" .= show cid] $ do
-    listener <- spawnListener cc cs semaphore
-    monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
-    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
-      cs cid semaphore runningJobsInfo runningJobs mIdleSignal
-    return . localDomain "finalizer" $ do
-      stopExecution listener
-      stopExecution dispatcher
-      waitForRunningJobs runningJobsInfo runningJobs
-      stopExecution monitor
-      unregisterConsumer cc cs cid
+      cid <- registerConsumer cc cs
+      localData ["consumer_id" .= show cid] $ do
+        listener <- spawnListener cc cs semaphore
+        monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
+        dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
+          cs cid semaphore runningJobsInfo runningJobs mIdleSignal
+        return . localDomain "finalizer" $ do
+          stopExecution listener
+          stopExecution dispatcher
+          waitForRunningJobs runningJobsInfo runningJobs
+          stopExecution monitor
+          unregisterConsumer cc cs cid
   where
     waitForRunningJobs runningJobsInfo runningJobs = do
       initialJobs <- liftBase $ readTVarIO runningJobsInfo
