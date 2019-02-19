@@ -39,7 +39,7 @@ import Database.PostgreSQL.Consumers.Utils
 -- seamlessly handle the finalization.
 runConsumer
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> m (m ())
@@ -47,7 +47,7 @@ runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 
 runConsumerWithIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> TMVar Bool
@@ -56,35 +56,38 @@ runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc c
 
 -- | Run the consumer and also signal whenever the consumer is waiting for
 -- getNotification or threadDelay.
-
 runConsumerWithMaybeIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
-runConsumerWithMaybeIdleSignal cc cs mIdleSignal = do
-  semaphore <- newMVar ()
-  runningJobsInfo <- liftBase $ newTVarIO M.empty
-  runningJobs <- liftBase $ newTVarIO 0
+runConsumerWithMaybeIdleSignal cc cs mIdleSignal
+  | ccMaxRunningJobs cc < 1 = do
+      logInfo_ "ccMaxRunningJobs < 1, not starting the consumer"
+      return $ return ()
+  | otherwise = do
+      semaphore <- newMVar ()
+      runningJobsInfo <- liftBase $ newTVarIO M.empty
+      runningJobs <- liftBase $ newTVarIO 0
 
-  skipLockedTest :: Either DBException () <- try . runDBT cs def $
-    runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
-  let useSkipLocked = either (const False) (const True) skipLockedTest
+      skipLockedTest :: Either DBException () <- try . runDBT cs def $
+        runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
+      let useSkipLocked = either (const False) (const True) skipLockedTest
 
-  cid <- registerConsumer cc cs
-  localData ["consumer_id" .= show cid] $ do
-    listener <- spawnListener cc cs semaphore
-    monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
-    dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
-      cs cid semaphore runningJobsInfo runningJobs mIdleSignal
-    return . localDomain "finalizer" $ do
-      stopExecution listener
-      stopExecution dispatcher
-      waitForRunningJobs runningJobsInfo runningJobs
-      stopExecution monitor
-      unregisterConsumer cc cs cid
+      cid <- registerConsumer cc cs
+      localData ["consumer_id" .= show cid] $ do
+        listener <- spawnListener cc cs semaphore
+        monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
+        dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
+          cs cid semaphore runningJobsInfo runningJobs mIdleSignal
+        return . localDomain "finalizer" $ do
+          stopExecution listener
+          stopExecution dispatcher
+          waitForRunningJobs runningJobsInfo runningJobs
+          stopExecution monitor
+          unregisterConsumer cc cs cid
   where
     waitForRunningJobs runningJobsInfo runningJobs = do
       initialJobs <- liftBase $ readTVarIO runningJobsInfo
@@ -143,7 +146,8 @@ spawnListener cc cs semaphore =
 -- | Spawn a thread that monitors working consumers
 -- for activity and periodically updates its own.
 spawnMonitor
-  :: (MonadBaseControl IO m, MonadLog m, MonadMask m)
+  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m,
+                        Show idx, FromSQL idx)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
@@ -177,23 +181,28 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
       , "  RETURNING id::bigint"
       ]
     inactive :: [Int64] <- fetchMany runIdentity
-    -- Reset reserved jobs manually, do not rely
-    -- on the foreign key constraint to do its job.
-    freed <- if null inactive
-      then return 0
-      else runSQL $ smconcat [
-        "UPDATE" <+> raw ccJobsTable
-      , "SET reserved_by = NULL"
-      , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
-      ]
-    return (length inactive, freed)
+    -- Reset reserved jobs manually, do not rely on the foreign key constraint
+    -- to do its job. We also reset finished_at to correctly bump number of
+    -- attempts on the next try.
+    freedJobs :: [idx] <- if null inactive
+      then return []
+      else do
+        runSQL_ $ smconcat
+          [ "UPDATE" <+> raw ccJobsTable
+          , "SET reserved_by = NULL"
+          , "  , finished_at = NULL"
+          , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
+          , "RETURNING id"
+          ]
+        fetchMany runIdentity
+    return (length inactive, freedJobs)
   when (inactiveConsumers > 0) $ do
     logInfo "Unregistered inactive consumers" $ object [
         "inactive_consumers" .= inactiveConsumers
       ]
-  when (freedJobs > 0) $ do
+  unless (null freedJobs) $ do
     logInfo "Freed locked jobs" $ object [
-        "freed_jobs" .= freedJobs
+        "freed_jobs" .= map show freedJobs
       ]
   liftBase . threadDelay $ 30 * 1000000 -- wait 30 seconds
   where
