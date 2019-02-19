@@ -39,7 +39,7 @@ import Database.PostgreSQL.Consumers.Utils
 -- seamlessly handle the finalization.
 runConsumer
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> m (m ())
@@ -47,7 +47,7 @@ runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 
 runConsumerWithIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> TMVar Bool
@@ -59,7 +59,7 @@ runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc c
 
 runConsumerWithMaybeIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
-     , ToSQL idx )
+     , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
@@ -143,7 +143,8 @@ spawnListener cc cs semaphore =
 -- | Spawn a thread that monitors working consumers
 -- for activity and periodically updates its own.
 spawnMonitor
-  :: (MonadBaseControl IO m, MonadLog m, MonadMask m)
+  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m,
+                        Show idx, FromSQL idx)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
@@ -177,23 +178,28 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
       , "  RETURNING id::bigint"
       ]
     inactive :: [Int64] <- fetchMany runIdentity
-    -- Reset reserved jobs manually, do not rely
-    -- on the foreign key constraint to do its job.
-    freed <- if null inactive
-      then return 0
-      else runSQL $ smconcat [
-        "UPDATE" <+> raw ccJobsTable
-      , "SET reserved_by = NULL"
-      , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
-      ]
-    return (length inactive, freed)
+    -- Reset reserved jobs manually, do not rely on the foreign key constraint
+    -- to do its job. We also reset finished_at to correctly bump number of
+    -- attempts on the next try.
+    freedJobs :: [idx] <- if null inactive
+      then return []
+      else do
+        runSQL_ $ smconcat
+          [ "UPDATE" <+> raw ccJobsTable
+          , "SET reserved_by = NULL"
+          , "  , finished_at = NULL"
+          , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
+          , "RETURNING id"
+          ]
+        fetchMany runIdentity
+    return (length inactive, freedJobs)
   when (inactiveConsumers > 0) $ do
     logInfo "Unregistered inactive consumers" $ object [
         "inactive_consumers" .= inactiveConsumers
       ]
-  when (freedJobs > 0) $ do
+  unless (null freedJobs) $ do
     logInfo "Freed locked jobs" $ object [
-        "freed_jobs" .= freedJobs
+        "freed_jobs" .= map show freedJobs
       ]
   liftBase . threadDelay $ 30 * 1000000 -- wait 30 seconds
   where
