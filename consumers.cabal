@@ -42,7 +42,7 @@ library
                   , monad-control     >= 1.0    && < 1.1
                   , monad-time        >= 0.3    && < 0.4
                   , mtl               >= 2.2    && < 2.3
-                  , stm               >= 2.5    && < 2.6
+                  , stm               >= 2.4    && < 2.6
                   , time              >= 1.6    && < 1.9
                   , transformers-base >= 0.4    && < 0.5
 
