@@ -99,7 +99,9 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 , ccNotificationTimeout   :: !Int
 -- | Maximum amount of jobs that can be processed in parallel.
 , ccMaxRunningJobs        :: !Int
--- | Function that processes a job.
+-- | Function that processes a job. It's recommended to process each
+-- job in a separate DB transaction, otherwise you'll have to remember
+-- to commit your changes to the database manually.
 , ccProcessJob            :: !(job -> m Result)
 -- | Action taken if a job processing function throws an exception.
 -- Note that if this action throws an exception, the consumer goes
