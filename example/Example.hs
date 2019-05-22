@@ -36,13 +36,14 @@ main = do
         []     -> defaultConnString
         (cs:_) -> cs
 
-  let connSettings                = def { csConnInfo = T.pack connString }
+  let connSettings                = defaultConnectionSettings
+                                    { csConnInfo = T.pack connString }
       ConnectionSource connSource = simpleSource connSettings
 
   -- Monad stack initialisation.
   withSimpleStdOutLogger $ \logger ->
     runLogT "consumers-example" logger $
-    runDBT connSource {- transactionSettings -} def $ do
+    runDBT connSource defaultTransactionSettings $ do
 
         -- Initialise.
         createTables
@@ -72,14 +73,17 @@ main = do
 
       createTables :: AppM ()
       createTables = do
-        migrateDatabase {- options -} def {- extensions -} [] {- domains -} []
+        migrateDatabase defaultExtrasOptions
+          {- extensions -} [] {- composites -} [] {- domains -} []
           tables migrations
-        checkDatabase {- options -} def {- domains -} [] tables
+        checkDatabase defaultExtrasOptions
+          {- composites -} [] {- domains -} []
+          tables
 
       dropTables :: AppM ()
       dropTables = do
-        migrateDatabase {- options -} def {- extensions -} [] {- domains -} []
-          {- tables -} []
+        migrateDatabase defaultExtrasOptions
+          {- extensions -} [] {- composites -} [] {- domains -} [] {- tables -} []
           [ dropTableMigration jobsTable
           , dropTableMigration consumersTable ]
 

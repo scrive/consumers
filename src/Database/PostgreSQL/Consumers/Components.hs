@@ -72,7 +72,8 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
       runningJobsInfo <- liftBase $ newTVarIO M.empty
       runningJobs <- liftBase $ newTVarIO 0
 
-      skipLockedTest :: Either DBException () <- try . runDBT cs def $
+      skipLockedTest :: Either DBException () <-
+        try . runDBT cs defaultTransactionSettings $
         runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
       let useSkipLocked = either (const False) (const True) skipLockedTest
 
@@ -139,7 +140,7 @@ spawnListener cc cs semaphore =
     signalDispatcher = do
       liftBase $ tryPutMVar semaphore ()
 
-    noTs = def {
+    noTs = defaultTransactionSettings {
       tsAutoTransaction = False
     }
 
@@ -395,7 +396,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
 ----------------------------------------
 
 ts :: TransactionSettings
-ts = def {
+ts = defaultTransactionSettings {
   -- PostgreSQL doesn't seem to handle very high amount of
   -- concurrent transactions that modify multiple rows in
   -- the same table well (see updateJobs) and sometimes (very

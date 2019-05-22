@@ -49,7 +49,7 @@ registerConsumer ConsumerConfig{..} cs = runDBT cs ts $ do
     ]
   fetchOne runIdentity
   where
-    ts = def {
+    ts = defaultTransactionSettings {
       tsAutoTransaction = False
     }
 
@@ -74,7 +74,7 @@ unregisterConsumer ConsumerConfig{..} cs wid = runDBT cs ts $ do
     , "  AND name =" <?> unRawSQL ccJobsTable
     ]
   where
-    ts = def {
+    ts = defaultTransactionSettings {
       tsRestartPredicate = Just . RestartPredicate
       $ \e _ -> qeErrorCode e == DeadlockDetected
     }

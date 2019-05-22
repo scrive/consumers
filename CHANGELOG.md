@@ -1,3 +1,6 @@
+# consumers-2.2.0.1 (2019-05-22)
+* Support hpqtypes-1.7.0.0 and hpqtypes-extras-1.9.0.0.
+
 # consumers-2.2.0.0 (2019-02-19)
 * When jobs are relased from a dead consumer, reset their finished_at column
 * Start the consumer only when ccMaxRunningJobs >= 1

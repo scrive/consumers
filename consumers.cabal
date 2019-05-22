@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.2.0.0
+version:            2.2.0.1
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -31,20 +31,20 @@ library
                     Database.PostgreSQL.Consumers.Components,
                     Database.PostgreSQL.Consumers.Utils
 
-  build-depends:    base >4 && <5,
-                    containers,
-                    exceptions,
-                    extra,
-                    hpqtypes >= 1.6 && < 1.7,
-                    lifted-base,
-                    lifted-threads,
-                    log-base >= 0.7,
-                    monad-control,
-                    monad-time,
-                    mtl,
-                    stm,
-                    time,
-                    transformers-base
+  build-depends:    base              >= 4.9    && < 4.13
+                  , containers        >= 0.5    && < 0.7
+                  , exceptions        >= 0.10   && < 0.11
+                  , extra             >= 1.6    && < 1.7
+                  , hpqtypes          >= 1.7    && < 1.8
+                  , lifted-base       >= 0.2    && < 0.3
+                  , lifted-threads    >= 1.0    && < 1.1
+                  , log-base          >= 0.7    && < 0.9
+                  , monad-control     >= 1.0    && < 1.1
+                  , monad-time        >= 0.3    && < 0.4
+                  , mtl               >= 2.2    && < 2.3
+                  , stm               >= 2.5    && < 2.6
+                  , time              >= 1.6    && < 1.9
+                  , transformers-base >= 0.4    && < 0.5
 
   hs-source-dirs:   src
 
@@ -74,7 +74,7 @@ test-suite consumers-example
   build-depends:      base,
                       consumers,
                       hpqtypes,
-                      hpqtypes-extras,
+                      hpqtypes-extras >= 1.9 && < 2.0,
                       log-base,
                       text,
                       text-show,
