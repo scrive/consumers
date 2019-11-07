@@ -35,7 +35,7 @@ library
                   , containers        >= 0.5    && < 0.7
                   , exceptions        >= 0.10   && < 0.11
                   , extra             >= 1.6    && < 1.7
-                  , hpqtypes          >= 1.7    && < 1.8
+                  , hpqtypes          >= 1.7    && < 1.9
                   , lifted-base       >= 0.2    && < 0.3
                   , lifted-threads    >= 1.0    && < 1.1
                   , log-base          >= 0.7    && < 0.9
