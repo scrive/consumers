@@ -1,4 +1,4 @@
-# consumers-2.2.0.2 (2020-04-02)
+# consumers-2.2.0.2 (2020-05-05)
 * Support hpqtypes-1.9.0.0 and relax base.
 
 # consumers-2.2.0.1 (2019-05-22)
