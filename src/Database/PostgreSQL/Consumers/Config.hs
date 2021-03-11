@@ -1,8 +1,10 @@
 {-# LANGUAGE ExistentialQuantification #-}
 module Database.PostgreSQL.Consumers.Config (
-    Action(..)
+    ConsumerConfig(..)
+  , Job(..)
   , Result(..)
-  , ConsumerConfig(..)
+  , Action(..)
+  , exponentialBackoff
   ) where
 
 import Control.Exception (SomeException)
@@ -15,20 +17,8 @@ import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
 import Database.PostgreSQL.PQTypes.SQL.Raw
 
--- | Action to take after a job was processed.
-data Action
-  = MarkProcessed
-  | RerunAfter Interval
-  | RerunAt UTCTime
-  | Remove
-    deriving (Eq, Ord, Show)
-
--- | Result of processing a job.
-data Result = Ok Action | Failed Action
-  deriving (Eq, Ord, Show)
-
 -- | Config of a consumer.
-data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
+data ConsumerConfig m idx info = forall row. FromRow row => ConsumerConfig {
 -- | Name of the database table where jobs are stored. The table needs to have
 -- the following columns in order to be suitable for acting as a job queue:
 --
@@ -80,9 +70,9 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- assemble a job.
 , ccJobSelectors          :: ![SQL]
 -- | Function that transforms the list of fields into a job.
-, ccJobFetcher            :: !(row -> job)
+, ccJobFetcher            :: !(row -> Job idx info)
 -- | Selector for taking out job ID from the job object.
-, ccJobIndex              :: !(job -> idx)
+, ccJobIndex              :: !(Job idx info -> idx)
 -- | Notification channel used for listening for incoming jobs. If set
 -- to 'Nothing', no listening is performed and jobs are selected from
 -- the database every 'ccNotificationTimeout' microseconds.
@@ -102,9 +92,51 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- | Function that processes a job. It's recommended to process each
 -- job in a separate DB transaction, otherwise you'll have to remember
 -- to commit your changes to the database manually.
-, ccProcessJob            :: !(job -> m Result)
+, ccProcessJob            :: !(Job idx info -> m Result)
 -- | Action taken if a job processing function throws an exception.
 -- Note that if this action throws an exception, the consumer goes
 -- down, so it's best to ensure that it doesn't throw.
-, ccOnException           :: !(SomeException -> job -> m Action)
+, ccOnException           :: !(SomeException -> Job idx info -> m Action)
 }
+
+data Job idx info = Job {
+  idx        :: idx
+, runAt      :: Maybe UTCTime
+, finishedAt :: Maybe UTCTime
+, attempts   :: Int
+, info       :: info
+}
+
+-- | Result of processing a job.
+data Result = Ok Action | Failed Action
+  deriving (Eq, Ord, Show)
+
+-- | Action to take after a job was processed.
+data Action
+  = MarkProcessed
+  | RerunAfter Interval
+  | RerunAt UTCTime
+  | Remove
+    deriving (Eq, Ord, Show)
+
+exponentialBackoff :: (Monad m)
+  => Int -> Interval -> SomeException -> Job idx info -> m Action
+exponentialBackoff maxAttempts startInterval _ Job{..} = return $
+  case (attempts > maxAttempts, attempts > 2) of
+    (True, _)      -> Remove
+    (False, False) -> RerunAfter startInterval
+    (False, True)  -> RerunAfter $
+      diffTimeToInterval $ intervalToDiffTime startInterval ^ attempts
+
+intervalToDiffTime :: Interval -> DiffTime
+intervalToDiffTime Interval{..} = secondsToDiffTime seconds
+  where seconds = (toInteger intYears * 365 * 24 * 60 * 60)
+                + (toInteger intMonths * 30 * 24 * 60 * 60)
+                + (toInteger intDays        * 24 * 60 * 60)
+                + (toInteger intHours            * 60 * 60)
+                + (toInteger intMinutes               * 60)
+                + toInteger intSeconds
+                + (toInteger intMicroseconds `div` 1000000)
+
+diffTimeToInterval :: DiffTime -> Interval
+diffTimeToInterval = imicroseconds . fromInteger . (*10^(-6 :: Integer)) . diffTimeToPicoseconds
