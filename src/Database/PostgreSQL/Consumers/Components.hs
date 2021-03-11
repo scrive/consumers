@@ -40,7 +40,7 @@ import Database.PostgreSQL.Consumers.Utils
 runConsumer
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> ConnectionSourceM m
   -> m (m ())
 runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
@@ -48,7 +48,7 @@ runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 runConsumerWithIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> ConnectionSourceM m
   -> TMVar Bool
   -> m (m ())
@@ -59,7 +59,7 @@ runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc c
 runConsumerWithMaybeIdleSignal
   :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
@@ -117,7 +117,7 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
 -- dispatcher to probe the database for incoming jobs.
 spawnListener
   :: (MonadBaseControl IO m, MonadMask m)
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> ConnectionSourceM m
   -> MVar ()
   -> m ThreadId
@@ -147,9 +147,9 @@ spawnListener cc cs semaphore =
 -- | Spawn a thread that monitors working consumers
 -- for activity and periodically updates its own.
 spawnMonitor
-  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m,
+  :: forall m idx info. (MonadBaseControl IO m, MonadLog m, MonadMask m,
                         Show idx, FromSQL idx)
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> ConnectionSourceM m
   -> ConsumerID
   -> m ThreadId
@@ -213,9 +213,9 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
 
 -- | Spawn a thread that reserves and processes jobs.
 spawnDispatcher
-  :: forall m idx job. ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m
+  :: forall m idx info. ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m
                        , Show idx, ToSQL idx )
-  => ConsumerConfig m idx job
+  => ConsumerConfig m idx info
   -> Bool
   -> ConnectionSourceM m
   -> ConsumerID
@@ -269,7 +269,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
 
       return (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m ([Job idx info], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <- runSQL $ smconcat [
@@ -313,7 +313,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
           ]
 
     -- | Spawn each job in a separate thread.
-    startJob :: job -> m (job, m (T.Result Result))
+    startJob :: Job idx info -> m (Job idx info, m (T.Result Result))
     startJob job = do
       (_, joinFork) <- mask $ \restore -> T.fork $ do
         tid <- myThreadId
@@ -327,7 +327,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
            modifyTVar' runningJobsInfo $ M.delete tid
 
     -- | Wait for all the jobs and collect their results.
-    joinJob :: (job, m (T.Result Result)) -> m (idx, Result)
+    joinJob :: (Job idx info, m (T.Result Result)) -> m (idx, Result)
     joinJob (job, joinFork) = joinFork >>= \eres -> case eres of
       Right result -> return (ccJobIndex job, result)
       Left ex -> do
