@@ -4,6 +4,7 @@ module Database.PostgreSQL.Consumers.Config (
   , Job(..)
   , Result(..)
   , Action(..)
+  , exponentialBackoff
   ) where
 
 import Control.Exception (SomeException)
@@ -117,3 +118,25 @@ data Action
   | RerunAt UTCTime
   | Remove
     deriving (Eq, Ord, Show)
+
+exponentialBackoff :: (Monad m)
+  => Int -> Interval -> SomeException -> Job idx info -> m Action
+exponentialBackoff maxAttempts startInterval _ Job{..} = return $
+  case (attempts > maxAttempts, attempts > 2) of
+    (True, _)      -> Remove
+    (False, False) -> RerunAfter startInterval
+    (False, True)  -> RerunAfter $
+      diffTimeToInterval $ intervalToDiffTime startInterval ^ attempts
+
+intervalToDiffTime :: Interval -> DiffTime
+intervalToDiffTime Interval{..} = secondsToDiffTime seconds
+  where seconds = (toInteger intYears * 365 * 24 * 60 * 60)
+                + (toInteger intMonths * 30 * 24 * 60 * 60)
+                + (toInteger intDays        * 24 * 60 * 60)
+                + (toInteger intHours            * 60 * 60)
+                + (toInteger intMinutes               * 60)
+                + toInteger intSeconds
+                + (toInteger intMicroseconds `div` 1000000)
+
+diffTimeToInterval :: DiffTime -> Interval
+diffTimeToInterval = imicroseconds . fromInteger . (*10^(-6 :: Integer)) . diffTimeToPicoseconds
