@@ -1,6 +1,7 @@
 {-# LANGUAGE ConstraintKinds     #-}
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -21,6 +22,7 @@ import Log
 import Log.Backend.StandardOutput
 import Prelude
 import System.Environment
+import System.Exit
 import TextShow
 
 import qualified Data.Text as T
@@ -31,13 +33,14 @@ type AppM a = DBT (LogT IO) a
 
 main :: IO ()
 main = do
-  args <- getArgs
-  let connString = case args of
-        []     -> defaultConnString
-        (cs:_) -> cs
+  connString <- getArgs >>= \case
+    connString : _args -> return $ T.pack connString
+    [] -> lookupEnv "GITHUB_ACTIONS" >>= \case
+      Just "true" -> return "host=postgres user=postgres password=postgres"
+      _           -> printUsage >> exitFailure
 
   let connSettings                = defaultConnectionSettings
-                                    { csConnInfo = T.pack connString }
+                                    { csConnInfo = connString }
       ConnectionSource connSource = simpleSource connSettings
 
   -- Monad stack initialisation.
@@ -61,10 +64,9 @@ main = do
         dropTables
 
     where
-
-      -- How to connect to DB.
-      defaultConnString =
-        "postgresql://postgres@localhost/travis_ci_test"
+      printUsage = do
+        prog <- getProgName
+        putStrLn $ "Usage: " <> prog <> " <connection info string>"
 
       tables     = [consumersTable, jobsTable]
       -- NB: order of migrations is important.
