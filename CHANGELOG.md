@@ -1,3 +1,6 @@
+# consumers-2.2.0.3 (2021-05-28)
+* Support GHC 9.0.
+
 # consumers-2.2.0.2 (2020-05-05)
 * Support hpqtypes-1.9.0.0 and relax base.
 
