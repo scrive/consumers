@@ -1,3 +1,6 @@
+# consumers-2.2.0.4 (2021-06-09)
+* Adjust to changes in log-base-0.10.
+
 # consumers-2.2.0.3 (2021-05-28)
 * Support GHC 9.0.
 

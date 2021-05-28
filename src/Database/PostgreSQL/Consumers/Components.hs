@@ -38,7 +38,7 @@ import Database.PostgreSQL.Consumers.Utils
 -- This function is best used in conjunction with 'finalize' to
 -- seamlessly handle the finalization.
 runConsumer
-  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -46,7 +46,7 @@ runConsumer
 runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 
 runConsumerWithIdleSignal
-  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -57,7 +57,7 @@ runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc c
 -- | Run the consumer and also signal whenever the consumer is waiting for
 -- getNotification or threadDelay.
 runConsumerWithMaybeIdleSignal
-  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, Eq idx, Show idx
+  :: ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m, Eq idx, Show idx
      , FromSQL idx, ToSQL idx )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -147,7 +147,7 @@ spawnListener cc cs semaphore =
 -- | Spawn a thread that monitors working consumers
 -- for activity and periodically updates its own.
 spawnMonitor
-  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m,
+  :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m,
                         Show idx, FromSQL idx)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
