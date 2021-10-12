@@ -45,7 +45,7 @@ main = do
 
   -- Monad stack initialisation.
   withSimpleStdOutLogger $ \logger ->
-    runLogT "consumers-example" logger $
+    runLogT "consumers-example" logger defaultLogLevel $
     runDBT connSource defaultTransactionSettings $ do
 
         -- Initialise.
