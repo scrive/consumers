@@ -63,7 +63,7 @@ modifyTestTime modtime = modify (\te -> te { teCurrentTime = modtime . teCurrent
 
 runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestEnv a -> IO a
 runTestEnv connSource logger m =
-    (runLogT "consumers-test" logger)
+    (runLogT "consumers-test" logger defaultLogLevel)
   . (runDBT connSource defaultTransactionSettings)
   . (\m' -> fst <$> (runStateT m' $ TestEnvSt $ UTCTime (ModifiedJulianDay 0) 0))
   . unTestEnv

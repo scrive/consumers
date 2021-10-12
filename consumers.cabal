@@ -39,7 +39,7 @@ library
                   , hpqtypes          >= 1.7    && < 2.0
                   , lifted-base       >= 0.2    && < 0.3
                   , lifted-threads    >= 1.0    && < 1.1
-                  , log-base          >= 0.7    && < 0.11
+                  , log-base          >= 0.11   && < 0.12
                   , monad-control     >= 1.0    && < 1.1
                   , monad-time        >= 0.3    && < 0.4
                   , mtl               >= 2.2    && < 2.3
