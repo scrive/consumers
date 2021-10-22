@@ -304,6 +304,7 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
           , "       AND reserved_by IS NULL"
           , "       AND run_at IS NOT NULL"
           , "       AND run_at <= " <?> now
+          , "       ORDER BY run_at"
           , "LIMIT" <?> limit
             -- Use SKIP LOCKED if available. Otherwise utilise
             -- advisory locks.
