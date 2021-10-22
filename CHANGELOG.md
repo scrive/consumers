@@ -1,3 +1,6 @@
+# consumers-2.2.0.6 (2021-10-22)
+* Improve efficiency of the SQL query that reserves jobs.
+
 # consumers-2.2.0.5 (2021-10-12)
 * Adjust to changes in log-base-0.11.
 
