@@ -87,9 +87,9 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- Whenever the consumer receives a notification, it checks the database
 -- for any pending jobs ('run_at <= NOW()') and runs them all.
 -- If set to 'Nothing', no listening is performed and 'ccNotificationTimeout'
--- should be set to positive number, otherwise no jobs would be ever run.
+-- should be set to a positive number, otherwise no jobs would be ever run.
 -- 'ccNotificationChannel' and 'ccNotificationTimeout' can be combined.
--- Consumer will check for pending jobs either when notification is received or
+-- The consumer will check for pending jobs either when notification is received or
 -- no notification is received for 'ccNotificationTimeout' microseconds since
 -- the last check.
 , ccNotificationChannel   :: !(Maybe Channel)
