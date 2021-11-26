@@ -83,19 +83,27 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 , ccJobFetcher            :: !(row -> job)
 -- | Selector for taking out job ID from the job object.
 , ccJobIndex              :: !(job -> idx)
--- | Notification channel used for listening for incoming jobs. If set
--- to 'Nothing', no listening is performed and jobs are selected from
--- the database every 'ccNotificationTimeout' microseconds.
+-- | Notification channel used for listening for incoming jobs.
+-- Whenever the consumer receives a notification, it checks the database
+-- for any pending jobs ('run_at <= NOW()') and runs them all.
+-- If set to 'Nothing', no listening is performed and 'ccNotificationTimeout'
+-- should be set to a positive number, otherwise no jobs would be ever run.
+-- 'ccNotificationChannel' and 'ccNotificationTimeout' can be combined.
+-- The consumer will check for pending jobs either when notification is received or
+-- no notification is received for 'ccNotificationTimeout' microseconds since
+-- the last check.
 , ccNotificationChannel   :: !(Maybe Channel)
--- | Timeout of listening for incoming jobs, in microseconds. The consumer
--- checks between the timeouts if there are any jobs in the database that
--- needs to be processed, so even if 'ccNotificationChannel' is 'Just', you
--- need to set it to a reasonable number if the jobs you process may fail
--- and are retried later, as there is no way to signal with a notification
--- that a job will need to be performed e.g. in 5 minutes. However, if
--- 'ccNotificationChannel' is 'Just' and jobs are never retried, you can
--- set it to -1, then listening will never timeout. Otherwise it needs to
--- be a positive number.
+-- | Timeout of checking for any pending jobs ('run_at <= NOW()'), in
+-- microseconds. The consumer checks the database for any pending jobs after
+-- 'ccNotificationTimeout' microseconds since the last check was performed,
+-- runs them until all pending jobs are processed and after that, the cycle
+-- repeats. Note that even if 'ccNotificationChannel' is 'Just', you need to set
+-- 'ccNotificationTimeout' to a reasonable number if the jobs you process may fail
+-- and are retried later, as there is no way to signal with a notification that
+-- a job will need to be performed e.g. in 5 minutes. However, if
+-- 'ccNotificationChannel' is 'Just' and jobs are never retried, you can set it
+-- to -1, then listening will never timeout. Otherwise it needs to be a positive
+-- number.
 , ccNotificationTimeout   :: !Int
 -- | Maximum amount of jobs that can be processed in parallel.
 , ccMaxRunningJobs        :: !Int
