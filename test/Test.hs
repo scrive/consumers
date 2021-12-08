@@ -160,6 +160,7 @@ test = do
         runSQL_ $ "INSERT INTO consumers_test_jobs "
           <> "(run_at, finished_at, reserved_by, attempts, countdown) "
           <> "VALUES (" <?> now <> " + interval '1 hour', NULL, NULL, 0, " <?> countdown <> ")"
+        notify "consumers_test_chan" ""
 
       processJob :: (Int64, Int32) -> TestEnv Result
       processJob (_idx, countdown) = do

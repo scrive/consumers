@@ -111,6 +111,7 @@ main = do
         runSQL_ $ "INSERT INTO consumers_example_jobs "
           <> "(run_at, finished_at, reserved_by, attempts, message) "
           <> "VALUES (NOW(), NULL, NULL, 0, 'hello')"
+        notify "consumers_example_chan" ""
         commit
 
       -- Invoked when a job is ready to be processed.
