@@ -32,26 +32,29 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- | Name of the database table where jobs are stored. The table needs to have
 -- the following columns in order to be suitable for acting as a job queue:
 --
--- * id - represents ID of the job. Needs to be a primary key of a type
+-- * __id__ - represents ID of the job. Needs to be a primary key of a type
 -- convertible to text, not nullable.
 --
--- * run_at - represents the time at which the job will be
--- processed. Needs to be nullable, of a type comparable with now()
+-- * __run_at__ - represents the time at which the job will be
+-- processed. Needs to be nullable, of a type comparable with @now()@
 -- (TIMESTAMPTZ is recommended).
+--
 -- Note: a job with run_at set to NULL is never picked for processing. Useful
 -- for storing already processed/expired jobs for debugging purposes.
 --
--- * finished_at - represents the time at which job processing was finished.
--- Needs to be nullable, of a type you can assign now() to (TIMESTAMPTZ is
+-- It's highly recommended to have an index on this column.
+--
+-- * __finished_at__ - represents the time at which job processing was finished.
+-- Needs to be nullable, of a type you can assign @now()@ to (TIMESTAMPTZ is
 -- recommended). NULL means that the job was either never processed or that
 -- it was started and failed at least once.
 --
--- * reserved_by - represents ID of the consumer that currently processes the
+-- * __reserved_by__ - represents ID of the consumer that currently processes the
 -- job. Needs to be nullable, of the type corresponding to id in the table
 -- 'ccConsumersTable'. It's recommended (though not neccessary) to make it
 -- a foreign key referencing id in 'ccConsumersTable' with ON DELETE SET NULL.
 --
--- * attempts - represents number of job processing attempts made so far. Needs
+-- * __attempts__ - represents number of job processing attempts made so far. Needs
 -- to be not nullable, of type INTEGER. Initial value of a fresh job should be
 -- 0, therefore it makes sense to make the column default to 0.
 --
@@ -59,14 +62,14 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- | Name of a database table where registered consumers are stored. The table
 -- itself needs to have the following columns:
 --
--- * id - represents ID of a consumer. Needs to be a primary key of the type
+-- * __id__ - represents ID of a consumer. Needs to be a primary key of the type
 -- SERIAL or BIGSERIAL (recommended).
 --
--- * name - represents jobs table of the consumer. Needs to be not nullable,
+-- * __name__ - represents jobs table of the consumer. Needs to be not nullable,
 -- of type TEXT. Allows for tracking consumers of multiple queues with one
 -- table. Set to 'ccJobsTable'.
 --
--- * last_activity - represents the last registered activity of the consumer.
+-- * __last_activity__ - represents the last registered activity of the consumer.
 -- It's updated periodically by all currently running consumers every 30
 -- seconds to prove that they are indeed running. They also check for the
 -- registered consumers that didn't update their status for a minute. If any
@@ -85,7 +88,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 , ccJobIndex              :: !(job -> idx)
 -- | Notification channel used for listening for incoming jobs.
 -- Whenever the consumer receives a notification, it checks the database
--- for any pending jobs ('run_at <= NOW()') and runs them all.
+-- for any pending jobs (@'run_at <= NOW()'@) and runs them all.
 -- If set to 'Nothing', no listening is performed and 'ccNotificationTimeout'
 -- should be set to a positive number, otherwise no jobs would be ever run.
 -- 'ccNotificationChannel' and 'ccNotificationTimeout' can be combined.
@@ -93,7 +96,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- no notification is received for 'ccNotificationTimeout' microseconds since
 -- the last check.
 , ccNotificationChannel   :: !(Maybe Channel)
--- | Timeout of checking for any pending jobs ('run_at <= NOW()'), in
+-- | Timeout of checking for any pending jobs (@'run_at <= NOW()'@), in
 -- microseconds. The consumer checks the database for any pending jobs after
 -- 'ccNotificationTimeout' microseconds since the last check was performed,
 -- runs them until all pending jobs are processed and after that, the cycle
