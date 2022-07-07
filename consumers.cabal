@@ -18,8 +18,7 @@ copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
 cabal-version:      >=1.10
-tested-with:        GHC ==8.0.2 || ==8.2.2 || ==8.4.4 || ==8.6.5 || ==8.8.4 || ==8.10.7
-                     || ==9.0.2
+tested-with:        GHC ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.3
 
 Source-repository head
   Type:             git
