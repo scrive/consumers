@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.2.0.6
+version:            2.3.0.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -18,8 +18,7 @@ copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
 cabal-version:      >=1.10
-tested-with:        GHC ==8.0.2 || ==8.2.2 || ==8.4.4 || ==8.6.5 || ==8.8.4 || ==8.10.7
-                     || ==9.0.2
+tested-with:        GHC ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.3
 
 Source-repository head
   Type:             git
@@ -32,7 +31,7 @@ library
                     Database.PostgreSQL.Consumers.Components,
                     Database.PostgreSQL.Consumers.Utils
 
-  build-depends:    base              >= 4.9    && < 5
+  build-depends:    base              >= 4.13   && < 5
                   , containers        >= 0.5    && < 0.7
                   , exceptions        >= 0.10   && < 0.11
                   , extra             >= 1.6    && < 1.8
@@ -41,7 +40,7 @@ library
                   , lifted-threads    >= 1.0    && < 1.1
                   , log-base          >= 0.11   && < 0.12
                   , monad-control     >= 1.0    && < 1.1
-                  , monad-time        >= 0.3    && < 0.4
+                  , monad-time        >= 0.4    && < 0.5
                   , mtl               >= 2.2    && < 2.3
                   , stm               >= 2.4    && < 2.6
                   , time              >= 1.6    && < 2.0

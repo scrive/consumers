@@ -1,3 +1,8 @@
+# consumers-2.3.0.0 (2022-07-07)
+* Update to monad-time 0.4.0.0
+* Support for GHC 9.2
+* Drop support for GHC < 8.8
+
 # consumers-2.2.0.6 (2021-10-22)
 * Improve efficiency of the SQL query that reserves jobs.
 

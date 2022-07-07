@@ -41,6 +41,7 @@ import qualified Test.HUnit as T
 
 data TestEnvSt = TestEnvSt {
     teCurrentTime :: UTCTime
+  , teMonotonicTime :: Double
   }
 
 type InnerTestEnv = StateT TestEnvSt (DBT (LogT IO))
@@ -57,6 +58,7 @@ instance MonadBaseControl IO TestEnv where
 
 instance MonadTime TestEnv where
   currentTime = gets teCurrentTime
+  monotonicTime = gets teMonotonicTime
 
 modifyTestTime :: (MonadState TestEnvSt m) => (UTCTime -> UTCTime) -> m ()
 modifyTestTime modtime = modify (\te -> te { teCurrentTime = modtime . teCurrentTime $ te })
@@ -65,7 +67,7 @@ runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestEnv a -> IO a
 runTestEnv connSource logger m =
     (runLogT "consumers-test" logger defaultLogLevel)
   . (runDBT connSource defaultTransactionSettings)
-  . (\m' -> fst <$> (runStateT m' $ TestEnvSt $ UTCTime (ModifiedJulianDay 0) 0))
+  . (\m' -> fst <$> (runStateT m' $ TestEnvSt (UTCTime (ModifiedJulianDay 0) 0) 0))
   . unTestEnv
   $ m
 
