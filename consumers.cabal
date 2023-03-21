@@ -1,5 +1,5 @@
 name:               consumers
-version:            2.3.0.0
+version:            2.3.1.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
