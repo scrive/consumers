@@ -75,13 +75,14 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
       skipLockedTest :: Either DBException () <-
         try . runDBT cs defaultTransactionSettings $
         runSQL_ "SELECT TRUE FOR UPDATE SKIP LOCKED"
-      let useSkipLocked = either (const False) (const True) skipLockedTest
+      -- If we can't lock rows using 'skip locked' throw an exception
+      either (const $ error "PostgreSQL version with support for SKIP LOCKED is required") pure skipLockedTest
 
       cid <- registerConsumer cc cs
       localData ["consumer_id" .= show cid] $ do
         listener <- spawnListener cc cs semaphore
         monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
-        dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc useSkipLocked
+        dispatcher <- localDomain "dispatcher" $ spawnDispatcher cc
           cs cid semaphore runningJobsInfo runningJobs mIdleSignal
         return . localDomain "finalizer" $ do
           stopExecution listener
@@ -216,7 +217,6 @@ spawnDispatcher
   :: forall m idx job. ( MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m
                        , Show idx, ToSQL idx )
   => ConsumerConfig m idx job
-  -> Bool
   -> ConnectionSourceM m
   -> ConsumerID
   -> MVar ()
@@ -224,7 +224,7 @@ spawnDispatcher
   -> TVar Int
   -> Maybe (TMVar Bool)
   -> m ThreadId
-spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
+spawnDispatcher ConsumerConfig{..} cs cid semaphore
   runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
     void $ takeMVar semaphore
@@ -288,29 +288,13 @@ spawnDispatcher ConsumerConfig{..} useSkipLocked cs cid semaphore
         reservedJobs :: UTCTime -> SQL
         reservedJobs now = smconcat [
             "SELECT id FROM" <+> raw ccJobsTable
-            -- Converting id to text and hashing it may seem silly,
-            -- especially when we're dealing with integers in the
-            -- first place, but even in such case the overhead is
-            -- small enough (converting 100k integers to text and
-            -- hashing them takes around 15 ms on i7) to be worth the
-            -- generality. Note that even if IDs of two pending jobs
-            -- produce the same hash, it just means that in the worst
-            -- case they will be processed by the same consumer.
-          , if useSkipLocked
-            then "WHERE TRUE"
-            else "WHERE pg_try_advisory_xact_lock("
-                 <?> unRawSQL ccJobsTable
-                 <> "::regclass::integer, hashtext(id::text))"
-          , "       AND reserved_by IS NULL"
+          , "WHERE"
+          , "       reserved_by IS NULL"
           , "       AND run_at IS NOT NULL"
           , "       AND run_at <= " <?> now
           , "       ORDER BY run_at"
           , "LIMIT" <?> limit
-            -- Use SKIP LOCKED if available. Otherwise utilise
-            -- advisory locks.
-          , if useSkipLocked
-            then "FOR UPDATE SKIP LOCKED"
-            else "FOR UPDATE"
+          , "FOR UPDATE SKIP LOCKED"
           ]
 
     -- | Spawn each job in a separate thread.

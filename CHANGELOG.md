@@ -1,3 +1,6 @@
+# consumers-2.3.1.0 (2023-??-??)
+* Drop support for advisory locks
+
 # consumers-2.3.0.0 (2022-07-07)
 * Update to monad-time 0.4.0.0
 * Support for GHC 9.2
