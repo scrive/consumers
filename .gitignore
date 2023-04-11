@@ -1,3 +1,4 @@
+# GHC and Cabal
 /dist/
 /dist-newstyle/
 /cabal.project.local
@@ -6,3 +7,13 @@ TAGS
 .ghc.environment.*
 .cabal-sandbox
 cabal.sandbox.config
+
+# direnv
+.direnv/
+.envrc
+
+# emacs
+**/.dir-locals.el
+
+# postgres
+_local/
