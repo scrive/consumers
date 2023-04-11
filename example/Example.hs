@@ -102,6 +102,7 @@ main = do
         , ccMaxRunningJobs      = 1
         , ccProcessJob          = processJob
         , ccOnException         = handleException
+        , ccMode                = Standard
         }
 
       -- Add a job to the consumer's queue.
