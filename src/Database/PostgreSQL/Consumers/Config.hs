@@ -1,6 +1,7 @@
 {-# LANGUAGE ExistentialQuantification #-}
 module Database.PostgreSQL.Consumers.Config (
     Action(..)
+  , Mode(..)
   , Result(..)
   , ConsumerConfig(..)
   ) where
@@ -21,11 +22,15 @@ data Action
   | RerunAfter Interval
   | RerunAt UTCTime
   | Remove
-    deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show)
 
 -- | Result of processing a job.
 data Result = Ok Action | Failed Action
   deriving (Eq, Ord, Show)
+
+-- | The mode the consumer will run in.
+data Mode = Standard | Deduplicating SQL
+  deriving (Show)
 
 -- | Config of a consumer.
 data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
@@ -118,4 +123,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- Note that if this action throws an exception, the consumer goes
 -- down, so it's best to ensure that it doesn't throw.
 , ccOnException           :: !(SomeException -> job -> m Action)
+-- | The mode the consumer will use to reserve jobs.
+-- In 'Deduplicating' mode the SQL expression indicates which field
+-- to select for deduplication.
+, ccMode                  :: Mode
 }

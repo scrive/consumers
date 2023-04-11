@@ -154,6 +154,7 @@ test = do
         , ccMaxRunningJobs      = 20
         , ccProcessJob          = processJob
         , ccOnException         = handleException
+        , ccMode                = Standard
         }
 
       putJob :: Int32 -> TestEnv ()

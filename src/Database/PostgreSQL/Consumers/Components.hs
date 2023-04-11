@@ -242,7 +242,11 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
 
     loop :: Int -> m Bool
     loop limit = do
-      (batch, batchSize) <- reserveJobs limit
+      -- If we're running in 'Deduplicating' mode we only
+      -- reserve one job at a time.
+      (batch, batchSize) <- reserveJobs $ case ccMode of
+        Standard -> limit
+        Deduplicating _ -> 1
       when (batchSize > 0) $ do
         logInfo "Processing batch" $ object [
             "batch_size" .= batchSize
@@ -286,16 +290,28 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
       (, n) . F.toList . fmap ccJobFetcher <$> queryResult
       where
         reservedJobs :: UTCTime -> SQL
-        reservedJobs now = smconcat [
-            "SELECT id FROM" <+> raw ccJobsTable
-          , "WHERE"
-          , "       reserved_by IS NULL"
-          , "       AND run_at IS NOT NULL"
-          , "       AND run_at <= " <?> now
-          , "       ORDER BY run_at"
-          , "LIMIT" <?> limit
-          , "FOR UPDATE SKIP LOCKED"
-          ]
+        reservedJobs now = case ccMode of
+          Standard -> smconcat [
+              "SELECT id FROM" <+> raw ccJobsTable
+            , "WHERE"
+            , "       reserved_by IS NULL"
+            , "       AND run_at IS NOT NULL"
+            , "       AND run_at <= " <?> now
+            , "       ORDER BY run_at"
+            , "LIMIT" <?> limit
+            , "FOR UPDATE SKIP LOCKED"
+            ]
+          Deduplicating field -> smconcat [
+              "WITH latest_for_id AS"
+            , "   (SELECT id," <+> field <+> "FROM" <+> raw ccJobsTable
+            , "   ORDER BY run_at," <+> field <> ", id" <+> "DESC LIMIT" <?> limit <+> "FOR UPDATE SKIP LOCKED),"
+            , "   lock_all AS"
+            , "   (SELECT id," <+> field <+> "FROM" <+> raw ccJobsTable
+            , "   WHERE" <+> field <+> "= (SELECT" <+> field <+> "FROM latest_for_id)"
+            , "     AND id <= (SELECT id FROM latest_for_id)"
+            , "   FOR UPDATE SKIP LOCKED)"
+            , "SELECT id," <+> field <+> "FROM lock_all"
+            ]
 
     -- | Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
