@@ -95,7 +95,7 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
       initialJobs <- liftBase $ readTVarIO runningJobsInfo
       (`fix` initialJobs) $ \loop jobsInfo -> do
         -- If jobs are still running, display info about them.
-        when (not $ M.null jobsInfo) $ do
+        unless (M.null jobsInfo) $ do
           logInfo "Waiting for running jobs" $ object [
               "job_id" .= showJobsInfo jobsInfo
             ]
@@ -108,7 +108,7 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
               -- If jobs info didn't change, wait for it to change.
               -- Otherwise loop so it either displays the new info
               -- or exits if there are no jobs running anymore.
-              if (newJobsInfo == jobsInfo)
+              if newJobsInfo == jobsInfo
                 then retry
                 else return $ loop newJobsInfo
       where
@@ -167,7 +167,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
     if ok
       then logInfo_ "Activity of the consumer updated"
       else do
-        logInfo_ $ "Consumer is not registered"
+        logInfo_ "Consumer is not registered"
         throwM ThreadKilled
   -- Freeing jobs locked by inactive consumers needs to happen
   -- exactly once, otherwise it's possible to free it twice, after
@@ -369,7 +369,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         retryToSQL _   (Right time) ids =
           ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
 
-        retries = foldr step M.empty $ map f updates
+        retries = foldr (step . f) M.empty updates
           where
             f (idx, result) = case result of
               Ok     action -> (idx, action)

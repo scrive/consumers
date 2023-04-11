@@ -65,9 +65,9 @@ modifyTestTime modtime = modify (\te -> te { teCurrentTime = modtime . teCurrent
 
 runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestEnv a -> IO a
 runTestEnv connSource logger m =
-    (runLogT "consumers-test" logger defaultLogLevel)
-  . (runDBT connSource defaultTransactionSettings)
-  . (\m' -> fst <$> (runStateT m' $ TestEnvSt (UTCTime (ModifiedJulianDay 0) 0) 0))
+    runLogT "consumers-test" logger defaultLogLevel
+  . runDBT connSource defaultTransactionSettings
+  . (\m' -> fst <$> runStateT m' (TestEnvSt (UTCTime (ModifiedJulianDay 0) 0) 0))
   . unTestEnv
   $ m
 
@@ -89,7 +89,7 @@ test = do
   withSimpleStdOutLogger $ \logger ->
     runTestEnv connSource logger $ do
       createTables
-      idleSignal <- liftIO $ atomically $ newEmptyTMVar
+      idleSignal <- liftIO newEmptyTMVarIO
       putJob 10 >> commit
 
       forM_ [1..10::Int] $ \_ -> do
@@ -101,7 +101,7 @@ test = do
         currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
 
       -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
-      runSQL_ $ "SELECT COUNT(*) from consumers_test_jobs"
+      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
       rowcount0 :: Int64 <- fetchOne runIdentity
       -- Move time 2 hours forward
       modifyTestTime $ addUTCTime (2*60*60)
@@ -109,13 +109,13 @@ test = do
                 runConsumerWithIdleSignal consumerConfig connSource idleSignal) $ do
         waitUntilTrue idleSignal
       -- Jobs are designed to double only 10 times, so there should be no jobs left now.
-      runSQL_ $ "SELECT COUNT(*) from consumers_test_jobs"
+      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
       rowcount1 :: Int64 <- fetchOne runIdentity
       liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
       dropTables
     where
-      waitUntilTrue tmvar = whileM_ (not <$> (liftIO $ atomically $ takeTMVar tmvar)) $ return ()
+      waitUntilTrue tmvar = whileM_ (not <$> liftIO (atomically $ takeTMVar tmvar)) $ return ()
 
       printUsage = do
         prog <- getProgName
@@ -178,7 +178,6 @@ test = do
         logAttention_ $
           "Job #" <> showt idx <> " failed with: " <> showt exc
         return . RerunAfter $ imicroseconds 500000
-
 
 jobsTable :: Table
 jobsTable =
