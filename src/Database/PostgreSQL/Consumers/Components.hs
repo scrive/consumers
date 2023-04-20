@@ -310,7 +310,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
             , "   WHERE" <+> field <+> "= (SELECT" <+> field <+> "FROM latest_for_id)"
             , "     AND id <= (SELECT id FROM latest_for_id)"
             , "   FOR UPDATE SKIP LOCKED)"
-            , "SELECT id," <+> field <+> "FROM lock_all"
+            , "SELECT id FROM lock_all"
             ]
 
     -- | Spawn each job in a separate thread.
