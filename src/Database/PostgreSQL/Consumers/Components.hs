@@ -246,7 +246,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
       -- reserve one job at a time.
       (batch, batchSize) <- reserveJobs $ case ccMode of
         Standard -> limit
-        Deduplicating _ -> 1
+        Duplicating _ -> 1
       when (batchSize > 0) $ do
         logInfo "Processing batch" $ object [
             "batch_size" .= batchSize
@@ -301,7 +301,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
             , "LIMIT" <?> limit
             , "FOR UPDATE SKIP LOCKED"
             ]
-          Deduplicating field -> smconcat [
+          Duplicating field -> smconcat [
               "WITH latest_for_id AS"
             , "   (SELECT id," <+> field <+> "FROM" <+> raw ccJobsTable
             , "   ORDER BY run_at," <+> field <> ", id" <+> "DESC LIMIT" <?> limit <+> "FOR UPDATE SKIP LOCKED),"

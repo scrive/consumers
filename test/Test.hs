@@ -77,7 +77,7 @@ main = do
   void . Test.runTestTT $
     Test.TestList
       [ Test.TestLabel "Test standard consumer config" $ Test.TestCase (test connSource)
-      , Test.TestLabel "Test deduplicating consumer config" $ Test.TestCase (testDeduplicating connSource)
+      , Test.TestLabel "Test duplicating consumer config" $ Test.TestCase (testDuplicating connSource)
       ]
 
 -- | Connect to the postgres database
@@ -95,34 +95,34 @@ connectToDB = do
       prog <- getProgName
       putStrLn $ "Usage: " <> prog <> " <connection info string>"
 
-testDeduplicating :: ConnectionSource [MonadBase IO, MonadMask] -> IO ()
-testDeduplicating (ConnectionSource connSource) =
+testDuplicating :: ConnectionSource [MonadBase IO, MonadMask] -> IO ()
+testDuplicating (ConnectionSource connSource) =
   withSimpleStdOutLogger $ \logger -> runTestEnv connSource logger $ do
     createTables
     idleSignal <- liftIO newEmptyTMVarIO
     let rows = 15
-    putJob rows "consumers_test_deduplicating_jobs"  "consumers_test_deduplicating_chan" *> commit
+    putJob rows "consumers_test_duplicating_jobs"  "consumers_test_duplicating_chan" *> commit
 
     -- Move time forward 2hours, because job is scheduled 1 hour into future
     modifyTestTime . addUTCTime $ 2*60*60
     finalize (localDomain "process" $
-              runConsumerWithIdleSignal deduplicatingConsumerConfig connSource idleSignal) $
+              runConsumerWithIdleSignal duplicatingConsumerConfig connSource idleSignal) $
       waitUntilTrue idleSignal
     currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
 
     runSQL_ "SELECT COUNT(*) from person_test"
     rowcount0 :: Int64 <- fetchOne runIdentity
 
-    runSQL_ "SELECT COUNT(*) from consumers_test_deduplicating_jobs"
+    runSQL_ "SELECT COUNT(*) from consumers_test_duplicating_jobs"
     rowcount1 :: Int64 <- fetchOne runIdentity
 
     liftIO $ Test.assertEqual "Number of rows in person_test is 2×rows" (2 * rows) (fromIntegral rowcount0)
-    liftIO $ Test.assertEqual "Job in consumers_test_deduplicating_jobs should be completed" 0 rowcount1
+    liftIO $ Test.assertEqual "Job in consumers_test_duplicating_jobs should be completed" 0 rowcount1
 
     dropTables
   where
 
-    tables     = [deduplicatingConsumersTable, deduplicatingJobsTable, personTable]
+    tables     = [duplicatingConsumersTable, duplicatingJobsTable, personTable]
 
     migrations = createTableMigration <$> tables
 
@@ -139,31 +139,31 @@ testDeduplicating (ConnectionSource connSource) =
     dropTables = do
       migrateDatabase defaultExtrasOptions
         {- extensions -} [] {- composites -} [] {- domains -} [] {- tables -} []
-        [ dropTableMigration deduplicatingJobsTable
-        , dropTableMigration deduplicatingConsumersTable
+        [ dropTableMigration duplicatingJobsTable
+        , dropTableMigration duplicatingConsumersTable
         , dropTableMigration personTable
         ]
 
-    deduplicatingConsumerConfig = ConsumerConfig
-        { ccJobsTable           = "consumers_test_deduplicating_jobs"
-        , ccConsumersTable      = "consumers_test_deduplicating_consumers"
+    duplicatingConsumerConfig = ConsumerConfig
+        { ccJobsTable           = "consumers_test_duplicating_jobs"
+        , ccConsumersTable      = "consumers_test_duplicating_consumers"
         , ccJobSelectors        = ["id", "countdown"]
         , ccJobFetcher          = id
         , ccJobIndex            = fst
-        , ccNotificationChannel = Just "consumers_test_deduplicating_chan"
+        , ccNotificationChannel = Just "consumers_test_duplicating_chan"
           -- select some small timeout
         , ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs      = 20
         , ccProcessJob          = insertNRows . snd
         , ccOnException         = \err (idx, _) -> handleException err idx
-        , ccMode                = Deduplicating "countdown"
+        , ccMode                = Duplicating "countdown"
         }
 
 insertNRows :: Int32 -> TestEnv Result
 insertNRows count = do
   replicateM_ (fromIntegral count) $ do
     runSQL_ "INSERT INTO person_test (name, age) VALUES ('Anna', 20)"
-    notify "consumers_test_deduplicating_chan" ""
+    notify "consumers_test_duplicating_chan" ""
   pure $ Ok Remove
 
 test :: ConnectionSource [MonadBase IO, MonadMask] -> IO ()
@@ -304,10 +304,10 @@ personTable =
   , tblPrimaryKey = pkOnColumn "id"
   }
 
-deduplicatingJobsTable :: Table
-deduplicatingJobsTable =
+duplicatingJobsTable :: Table
+duplicatingJobsTable =
   tblTable
-  { tblName = "consumers_test_deduplicating_jobs"
+  { tblName = "consumers_test_duplicating_jobs"
   , tblVersion = 1
   , tblColumns =
     [ tblColumn { colName = "id",          colType = BigSerialT
@@ -329,7 +329,7 @@ deduplicatingJobsTable =
     ]
   , tblPrimaryKey = pkOnColumn "id"
   , tblForeignKeys = [
-    (fkOnColumn "reserved_by" "consumers_test_deduplicating_consumers" "id") {
+    (fkOnColumn "reserved_by" "consumers_test_duplicating_consumers" "id") {
       fkOnDelete = ForeignKeySetNull
       }
     ]
@@ -351,10 +351,10 @@ consumersTable =
   , tblPrimaryKey = pkOnColumn "id"
   }
 
-deduplicatingConsumersTable :: Table
-deduplicatingConsumersTable =
+duplicatingConsumersTable :: Table
+duplicatingConsumersTable =
   tblTable
-  { tblName = "consumers_test_deduplicating_consumers"
+  { tblName = "consumers_test_duplicating_consumers"
   , tblVersion = 1
   , tblColumns =
     [ tblColumn { colName = "id",            colType = BigSerialT
