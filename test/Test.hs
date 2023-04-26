@@ -76,11 +76,10 @@ main = do
   connSource <- connectToDB
   void . Test.runTestTT $
     Test.TestList
-      [ Test.TestLabel "Test standard consumer config" $ Test.TestCase (test connSource)
+      [ Test.TestLabel "Test standard (non-duplicating) consumer config" $ Test.TestCase (test connSource)
       , Test.TestLabel "Test duplicating consumer config" $ Test.TestCase (testDuplicating connSource)
       ]
 
--- | Connect to the postgres database
 connectToDB :: IO (ConnectionSource [MonadBase IO, MonadMask])
 connectToDB = do
   connString <- getArgs >>= \case
@@ -152,7 +151,7 @@ testDuplicating (ConnectionSource connSource) =
         , ccJobIndex            = fst
         , ccNotificationChannel = Just "consumers_test_duplicating_chan"
           -- select some small timeout
-        , ccNotificationTimeout = 100 * 1000 -- 100 msec
+        , ccNotificationTimeout = 100 * 1000 -- msec
         , ccMaxRunningJobs      = 20
         , ccProcessJob          = insertNRows . snd
         , ccOnException         = \err (idx, _) -> handleException err idx

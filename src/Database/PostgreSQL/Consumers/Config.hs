@@ -124,7 +124,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- down, so it's best to ensure that it doesn't throw.
 , ccOnException           :: !(SomeException -> job -> m Action)
 -- | The mode the consumer will use to reserve jobs.
--- In 'Duplicating' mode the SQL expression indicates which field
--- to select for duplication.
+-- In @'Duplicating'@ mode the SQL expression indicates which field
+-- in the jobs table (specified by @'ccJobsTable'@) to select for duplication.
 , ccMode                  :: Mode
 }
