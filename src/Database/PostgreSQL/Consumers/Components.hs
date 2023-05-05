@@ -345,10 +345,10 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
-      runSQL_ $ smconcat [
-          "WITH removed AS ("
+      runSQL_ $ smconcat
+        [ "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
-        , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
+        , "  WHERE id" <+> operator <+> "ANY (" <?> Array1 deletes <+> ")"
         , ")"
         , "UPDATE" <+> raw ccJobsTable <+> "SET"
         , "  reserved_by = NULL"
@@ -361,9 +361,12 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
         , "    ELSE NULL"
         , "  END"
-        , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
+        , "WHERE id" <+> operator <+> "ANY (" <?> Array1 (map fst updates) <+> ")"
         ]
       where
+        operator = case ccMode of
+          Standard -> "="
+          Duplicating _field -> "<="
         retryToSQL now (Left int) ids =
           ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
         retryToSQL _   (Right time) ids =
