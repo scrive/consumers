@@ -29,7 +29,7 @@ data Result = Ok Action | Failed Action
   deriving (Eq, Ord, Show)
 
 -- | The mode the consumer will run in.
-data Mode = Standard | Duplicating SQL
+data Mode = Standard | Duplicating (RawSQL ())
   deriving (Show)
 
 -- | Config of a consumer.

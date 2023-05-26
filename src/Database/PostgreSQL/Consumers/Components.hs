@@ -28,6 +28,7 @@ import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.Thread.Lifted as T
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
+import qualified Data.Text as Text
 
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
@@ -244,9 +245,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     loop limit = do
       -- If we're running in 'Deduplicating' mode we only
       -- reserve one job at a time.
-      (batch, batchSize) <- reserveJobs $ case ccMode of
-        Standard -> limit
-        Duplicating _ -> 1
+      (batch, batchSize) <- reserveJobs limit
       when (batchSize > 0) $ do
         logInfo "Processing batch" $ object [
             "batch_size" .= batchSize
@@ -262,7 +261,9 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
                 modifyTVar' runningJobs (subtract batchSize)
           void . forkP "batch processor"
             . (`finally` subtractJobs) . restore $ do
-            mapM startJob batch >>= mapM joinJob >>= updateJobs
+            case batch of
+              Left job -> startJob job >>= joinJob >>= updateJob
+              Right jobs -> mapM startJob jobs >>= mapM joinJob >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -273,7 +274,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
 
       return (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m (Either job [job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <- runSQL $ smconcat [
@@ -287,8 +288,11 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "RETURNING" <+> mintercalate ", " ccJobSelectors
         ]
       -- Decode lazily as we want the transaction to be as short as possible.
-      (, n) . F.toList . fmap ccJobFetcher <$> queryResult
+      (, n) . limitJobs . F.toList . fmap ccJobFetcher <$> queryResult
       where
+        limitJobs = case ccMode of
+          Standard -> Right
+          Duplicating _field -> Left . head
         reservedJobs :: UTCTime -> SQL
         reservedJobs now = case ccMode of
           Standard -> smconcat [
@@ -303,11 +307,11 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
             ]
           Duplicating field -> smconcat [
               "WITH latest_for_id AS"
-            , "   (SELECT id," <+> field <+> "FROM" <+> raw ccJobsTable
-            , "   ORDER BY run_at," <+> field <> ", id" <+> "DESC LIMIT" <?> limit <+> "FOR UPDATE SKIP LOCKED),"
+            , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
+            , "   ORDER BY run_at," <+> raw field <> ", id" <+> "DESC LIMIT 1 FOR UPDATE SKIP LOCKED),"
             , "   lock_all AS"
-            , "   (SELECT id," <+> field <+> "FROM" <+> raw ccJobsTable
-            , "   WHERE" <+> field <+> "= (SELECT" <+> field <+> "FROM latest_for_id)"
+            , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
+            , "   WHERE" <+> raw field <+> "= (SELECT" <+> raw field <+> "FROM latest_for_id)"
             , "     AND id <= (SELECT id FROM latest_for_id)"
             , "   FOR UPDATE SKIP LOCKED)"
             , "SELECT id FROM lock_all"
@@ -341,11 +345,54 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           ]
         return (ccJobIndex job, Failed action)
 
+    updateJob :: (idx, Result) -> m ()
+    updateJob (idx, result) = runDBT cs ts $ do
+      now <- currentTime
+      affected <- runSQL $ query now
+      logInfo_ $ "[DEBUG] 'updateJob' affected rows: " <> Text.pack (show affected)
+      where
+        query now = case result of
+          Ok Remove -> deleteQuery
+          Failed Remove -> deleteQuery
+          _ -> retryQuery now (isSuccess result) (getAction result)
+
+        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE id <=" <?> idx
+
+        retryQuery now success action = smconcat
+          [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+          , "  reserved_by = NULL"
+          , ", run_at = CASE"
+          , "    WHEN FALSE THEN run_at"
+          ,      retryToSQL
+          , "    ELSE NULL" -- processed
+          , "  END"
+          , if success then smconcat
+              [ ", finished_at = CASE"
+              , "    WHEN id =" <?> idx <+> "THEN" <?> now
+              , "    ELSE NULL"
+              , "  END"
+              ]
+              else ""
+          , "WHERE id <=" <?> idx
+          ]
+          where
+            retryToSQL = case action of
+              RerunAfter int -> "WHEN id =" <?> idx <+> "THEN" <?> now <+> "+" <?> int
+              RerunAt time -> "WHEN id =" <?> idx <+> "THEN" <?> time
+              MarkProcessed -> ""
+              Remove -> error "updateJob: Remove should've been filtered out"
+
+        isSuccess (Ok _) = True
+        isSuccess (Failed _) = False
+
+        getAction (Ok action) = action
+        getAction (Failed action) = action
+
     -- | Update status of the jobs.
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
-      runSQL_ $ smconcat
+      affected <- runSQL $ smconcat
         [ "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
         , "  WHERE id" <+> operator <+> "ANY (" <?> Array1 deletes <+> ")"
@@ -363,6 +410,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "  END"
         , "WHERE id" <+> operator <+> "ANY (" <?> Array1 (map fst updates) <+> ")"
         ]
+      logInfo_ $ "[DEBUG] 'updateJobs' affected rows: " <> Text.pack (show affected)
       where
         operator = case ccMode of
           Standard -> "="
