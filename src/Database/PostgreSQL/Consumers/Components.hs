@@ -28,7 +28,6 @@ import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.Thread.Lifted as T
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
-import qualified Data.Text as Text
 
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
@@ -348,8 +347,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     updateJob :: (idx, Result) -> m ()
     updateJob (idx, result) = runDBT cs ts $ do
       now <- currentTime
-      affected <- runSQL $ query now
-      logInfo_ $ "[DEBUG] 'updateJob' affected rows: " <> Text.pack (show affected)
+      runSQL_ $ query now
       where
         query now = case result of
           Ok Remove -> deleteQuery
@@ -392,7 +390,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
-      affected <- runSQL $ smconcat
+      runSQL_ $ smconcat
         [ "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
         , "  WHERE id" <+> operator <+> "ANY (" <?> Array1 deletes <+> ")"
@@ -410,7 +408,6 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "  END"
         , "WHERE id" <+> operator <+> "ANY (" <?> Array1 (map fst updates) <+> ")"
         ]
-      logInfo_ $ "[DEBUG] 'updateJobs' affected rows: " <> Text.pack (show affected)
       where
         operator = case ccMode of
           Standard -> "="
