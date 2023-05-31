@@ -307,7 +307,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           Duplicating field -> smconcat [
               "WITH latest_for_id AS"
             , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
-            , "   ORDER BY run_at," <+> raw field <> ", id" <+> "DESC LIMIT 1 FOR UPDATE SKIP LOCKED),"
+            , "   ORDER BY run_at," <+> raw field <> ", id DESC LIMIT 1 FOR UPDATE SKIP LOCKED),"
             , "   lock_all AS"
             , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
             , "   WHERE" <+> raw field <+> "= (SELECT" <+> raw field <+> "FROM latest_for_id)"
@@ -354,7 +354,11 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           Failed Remove -> deleteQuery
           _ -> retryQuery now (isSuccess result) (getAction result)
 
-        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE id <=" <?> idx
+        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE" <+> raw row <+> "<=" <?> idx
+          where
+            row = case ccMode of
+              Standard -> "id"
+              Duplicating field -> field
 
         retryQuery now success action = smconcat
           [ "UPDATE" <+> raw ccJobsTable <+> "SET"
