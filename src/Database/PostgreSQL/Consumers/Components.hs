@@ -347,18 +347,12 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     updateJob :: (idx, Result) -> m ()
     updateJob (idx, result) = runDBT cs ts $ do
       now <- currentTime
-      runSQL_ $ query now
-      where
-        query now = case result of
+      runSQL_ $ case result of
           Ok Remove -> deleteQuery
           Failed Remove -> deleteQuery
           _ -> retryQuery now (isSuccess result) (getAction result)
-
-        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE" <+> raw row <+> "<=" <?> idx
-          where
-            row = case ccMode of
-              Standard -> "id"
-              Duplicating field -> field
+      where
+        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE" <+> raw idxRow <+> "<=" <?> idx
 
         retryQuery now success action = smconcat
           [ "UPDATE" <+> raw ccJobsTable <+> "SET"
@@ -375,7 +369,8 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               , "  END"
               ]
               else ""
-          , "WHERE id <=" <?> idx
+          -- TODO: Is this right for deduplicating consumers?
+          , "WHERE" <+> raw idxRow <+> "<=" <?> idx
           ]
           where
             retryToSQL = case action of
@@ -383,6 +378,10 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               RerunAt time -> "WHEN id =" <?> idx <+> "THEN" <?> time
               MarkProcessed -> ""
               Remove -> error "updateJob: Remove should've been filtered out"
+
+        idxRow = case ccMode of
+          Standard -> error "'updateJob' should never be called when ccMode = " <> show Standard
+          Duplicating field -> field
 
         isSuccess (Ok _) = True
         isSuccess (Failed _) = False
