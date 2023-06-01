@@ -96,7 +96,7 @@ connectToDB = do
 
 testDuplicating :: ConnectionSource [MonadBase IO, MonadMask] -> IO ()
 testDuplicating (ConnectionSource connSource) =
-  withSimpleStdOutLogger $ \logger -> runTestEnv connSource logger $ do
+  withStdOutLogger $ \logger -> runTestEnv connSource logger $ do
     createTables
     idleSignal <- liftIO newEmptyTMVarIO
     let rows = 15
@@ -148,10 +148,10 @@ testDuplicating (ConnectionSource connSource) =
         , ccConsumersTable      = "consumers_test_duplicating_consumers"
         , ccJobSelectors        = ["id", "countdown"]
         , ccJobFetcher          = id
-        , ccJobIndex            = fst
+        , ccJobIndex            = snd
         , ccNotificationChannel = Just "consumers_test_duplicating_chan"
           -- select some small timeout
-        , ccNotificationTimeout = 100 * 1000 -- msec
+        , ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs      = 20
         , ccProcessJob          = insertNRows . snd
         , ccOnException         = \err (idx, _) -> handleException err idx
@@ -167,7 +167,7 @@ insertNRows count = do
 
 test :: ConnectionSource [MonadBase IO, MonadMask] -> IO ()
 test (ConnectionSource connSource) =
-  withSimpleStdOutLogger $ \logger ->
+  withStdOutLogger $ \logger ->
     runTestEnv connSource logger $ do
       createTables
       idleSignal <- liftIO newEmptyTMVarIO

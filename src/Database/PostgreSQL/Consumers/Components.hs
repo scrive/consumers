@@ -380,7 +380,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               Remove -> error "updateJob: Remove should've been filtered out"
 
         idxRow = case ccMode of
-          Standard -> error "'updateJob' should never be called when ccMode = " <> show Standard
+          Standard -> error $ "'updateJob' should never be called when ccMode = " <> show Standard
           Duplicating field -> field
 
         isSuccess (Ok _) = True
