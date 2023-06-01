@@ -242,8 +242,6 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
 
     loop :: Int -> m Bool
     loop limit = do
-      -- If we're running in 'Deduplicating' mode we only
-      -- reserve one job at a time.
       (batch, batchSize) <- reserveJobs limit
       when (batchSize > 0) $ do
         logInfo "Processing batch" $ object [
@@ -259,7 +257,9 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           let subtractJobs = atomically $ do
                 modifyTVar' runningJobs (subtract batchSize)
           void . forkP "batch processor"
-            . (`finally` subtractJobs) . restore $ do
+            . (`finally` subtractJobs) . restore $
+            -- Ensures that we only process one job at a time
+            -- when running in 'Duplicating' mode.
             case batch of
               Left job -> startJob job >>= joinJob >>= updateJob
               Right jobs -> mapM startJob jobs >>= mapM joinJob >>= updateJobs
