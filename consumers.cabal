@@ -18,7 +18,7 @@ copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
 cabal-version:      >=1.10
-tested-with:        GHC ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.3 || ==9.4.4
+tested-with:        GHC ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.7 || ==9.4.5 || ==9.6.1
 
 Source-repository head
   Type:             git
@@ -38,13 +38,25 @@ library
                   , hpqtypes          >= 1.11   && < 2.0
                   , lifted-base       >= 0.2    && < 0.3
                   , lifted-threads    >= 1.0    && < 1.1
-                  , log-base          >= 0.11   && < 0.13
+                  , log-base          >= 0.11   && < 0.12
                   , monad-control     >= 1.0    && < 1.1
                   , monad-time        >= 0.4    && < 0.5
                   , mtl               >= 2.2    && < 2.3
                   , stm               >= 2.4    && < 2.6
                   , time              >= 1.6    && < 2.0
                   , transformers-base >= 0.4    && < 0.5
+                  , containers        >= 0.5
+                  , exceptions        >= 0.10
+                  , hpqtypes          >= 1.11
+                  , lifted-base       >= 0.2
+                  , lifted-threads    >= 1.0
+                  , log-base          >= 0.11
+                  , monad-control     >= 1.0
+                  , monad-time        >= 0.4
+                  , mtl               >= 2.2
+                  , stm               >= 2.4
+                  , time              >= 1.6
+                  , transformers-base >= 0.4
 
   hs-source-dirs:   src
 
@@ -74,7 +86,7 @@ test-suite consumers-example
   build-depends:      base,
                       consumers,
                       hpqtypes,
-                      hpqtypes-extras >= 1.9 && < 2.0,
+                      hpqtypes-extras,
                       log-base,
                       text,
                       text-show,
