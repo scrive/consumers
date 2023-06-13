@@ -369,7 +369,6 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               , "  END"
               ]
               else ""
-          -- TODO: Is this right for deduplicating consumers?
           , "WHERE" <+> raw idxRow <+> "<=" <?> idx
           ]
           where
