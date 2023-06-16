@@ -102,7 +102,7 @@ testDuplicating (ConnectionSource connSource) =
     let rows = 15
     putJob rows "consumers_test_duplicating_jobs"  "consumers_test_duplicating_chan" *> commit
 
-    -- Move time forward 2hours, because job is scheduled 1 hour into future
+    -- Move time forward 2 hours, because job is scheduled 1 hour into future
     modifyTestTime . addUTCTime $ 2*60*60
     finalize (localDomain "process" $
               runConsumerWithIdleSignal duplicatingConsumerConfig connSource idleSignal) $
@@ -151,7 +151,7 @@ testDuplicating (ConnectionSource connSource) =
         , ccJobIndex            = snd
         , ccNotificationChannel = Just "consumers_test_duplicating_chan"
           -- select some small timeout
-        , ccNotificationTimeout = 100 * 1000 -- 100 msec
+        , ccNotificationTimeout = 100 * 1000 -- msec
         , ccMaxRunningJobs      = 20
         , ccProcessJob          = insertNRows . snd
         , ccOnException         = \err (idx, _) -> handleException err idx
@@ -293,11 +293,14 @@ personTable =
   { tblName = "person_test"
   , tblVersion = 1
   , tblColumns =
-    [ tblColumn { colName = "id",            colType = BigSerialT
+    [ tblColumn { colName = "id"
+                , colType = BigSerialT
                 , colNullable = False }
-    , tblColumn { colName = "name",          colType = TextT
+    , tblColumn { colName = "name"
+                , colType = TextT
                 , colNullable = False }
-    , tblColumn { colName = "age", colType = IntegerT
+    , tblColumn { colName = "age"
+                , colType = IntegerT
                 , colNullable = False }
     ]
   , tblPrimaryKey = pkOnColumn "id"
@@ -309,21 +312,27 @@ duplicatingJobsTable =
   { tblName = "consumers_test_duplicating_jobs"
   , tblVersion = 1
   , tblColumns =
-    [ tblColumn { colName = "id",          colType = BigSerialT
+    [ tblColumn { colName = "id"
+                , colType = BigSerialT
                 , colNullable = False }
-    , tblColumn { colName = "run_at",      colType = TimestampWithZoneT
+    , tblColumn { colName = "run_at"
+                , colType = TimestampWithZoneT
                 , colNullable = True }
-    , tblColumn { colName = "finished_at", colType = TimestampWithZoneT
+    , tblColumn { colName = "finished_at"
+                , colType = TimestampWithZoneT
                 , colNullable = True }
-    , tblColumn { colName = "reserved_by", colType = BigIntT
+    , tblColumn { colName = "reserved_by"
+                , colType = BigIntT
                 , colNullable = True }
-    , tblColumn { colName = "attempts",    colType = IntegerT
+    , tblColumn { colName = "attempts"
+                , colType = IntegerT
                 , colNullable = False }
 
       -- Non-obligatory field "countdown". Really more of a count
       -- and not a countdown, but name is kept to that we can reuse
       -- `putJob` function.
-    , tblColumn { colName = "countdown",    colType = IntegerT
+    , tblColumn { colName = "countdown"
+                , colType = IntegerT
                 , colNullable = False }
     ]
   , tblPrimaryKey = pkOnColumn "id"
@@ -340,11 +349,14 @@ consumersTable =
   { tblName = "consumers_test_consumers"
   , tblVersion = 1
   , tblColumns =
-    [ tblColumn { colName = "id",            colType = BigSerialT
+    [ tblColumn { colName = "id"
+                , colType = BigSerialT
                 , colNullable = False }
-    , tblColumn { colName = "name",          colType = TextT
+    , tblColumn { colName = "name"
+                , colType = TextT
                 , colNullable = False }
-    , tblColumn { colName = "last_activity", colType = TimestampWithZoneT
+    , tblColumn { colName = "last_activity"
+                , colType = TimestampWithZoneT
                 , colNullable = False }
     ]
   , tblPrimaryKey = pkOnColumn "id"
@@ -356,11 +368,14 @@ duplicatingConsumersTable =
   { tblName = "consumers_test_duplicating_consumers"
   , tblVersion = 1
   , tblColumns =
-    [ tblColumn { colName = "id",            colType = BigSerialT
+    [ tblColumn { colName = "id"
+                , colType = BigSerialT
                 , colNullable = False }
-    , tblColumn { colName = "name",          colType = TextT
+    , tblColumn { colName = "name"
+                , colType = TextT
                 , colNullable = False }
-    , tblColumn { colName = "last_activity", colType = TimestampWithZoneT
+    , tblColumn { colName = "last_activity"
+                , colType = TimestampWithZoneT
                 , colNullable = False }
     ]
   , tblPrimaryKey = pkOnColumn "id"

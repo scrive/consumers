@@ -28,7 +28,21 @@ data Action
 data Result = Ok Action | Failed Action
   deriving (Eq, Ord, Show)
 
--- | The mode the consumer will run in.
+-- | The mode the consumer will run in:
+--
+--    * @'Standard'@ - Consumer jobs will be run in ascending order
+--      based on the __run_at__ field. When jobs are updated,
+--      ones that are marked for removal will be deleted.
+--
+--    * @'Duplicating' field@ - The job with the highest __id__ for
+--      the lowest __run_at__ and __field__ value is selected. Then
+--      all jobs that have the same __field__ value and a smaller or equal
+--      __id__ value are reserved and run. When /one/ of these jobs are removed
+--     all jobs with a smaller or equal __field_ value are also deleted. This
+--     essentially allows one to race multiple jobs, only applying the result
+--     of whichever job finishes first.
+--
+-- Note: One cannot duplicate on the primary key field named @'id'@ in the @'ccJobsTable'@.
 data Mode = Standard | Duplicating (RawSQL ())
   deriving (Show)
 

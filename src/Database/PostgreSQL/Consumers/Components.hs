@@ -259,7 +259,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           void . forkP "batch processor"
             . (`finally` subtractJobs) . restore $
             -- Ensures that we only process one job at a time
-            -- when running in 'Duplicating' mode.
+            -- when running in @'Duplicating'@ mode.
             case batch of
               Left job -> startJob job >>= joinJob >>= updateJob
               Right jobs -> mapM startJob jobs >>= mapM joinJob >>= updateJobs
@@ -289,6 +289,8 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
       -- Decode lazily as we want the transaction to be as short as possible.
       (, n) . limitJobs . F.toList . fmap ccJobFetcher <$> queryResult
       where
+        -- Reserve a single job or a list of jobs depending
+        -- on which @'ccMode'@ the consumer is running in.
         limitJobs = case ccMode of
           Standard -> Right
           Duplicating _field -> Left . head
@@ -316,7 +318,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
             , "SELECT id FROM lock_all"
             ]
 
-    -- | Spawn each job in a separate thread.
+    -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
     startJob job = do
       (_, joinFork) <- mask $ \restore -> T.fork $ do
@@ -330,7 +332,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         unregisterJob tid = atomically $ do
            modifyTVar' runningJobsInfo $ M.delete tid
 
-    -- | Wait for all the jobs and collect their results.
+    -- Wait for all the jobs and collect their results.
     joinJob :: (job, m (T.Result Result)) -> m (idx, Result)
     joinJob (job, joinFork) = joinFork >>= \eres -> case eres of
       Right result -> return (ccJobIndex job, result)
@@ -344,11 +346,14 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           ]
         return (ccJobIndex job, Failed action)
 
+    -- Update the status of a job running in @'Duplicating'@ mode.
     updateJob :: (idx, Result) -> m ()
     updateJob (idx, result) = runDBT cs ts $ do
       now <- currentTime
       runSQL_ $ case result of
           Ok Remove -> deleteQuery
+          -- TODO: Should we be deduplicating when a job fails with 'Remove' or only
+          -- remove the failing job?
           Failed Remove -> deleteQuery
           _ -> retryQuery now (isSuccess result) (getAction result)
       where
@@ -376,7 +381,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               RerunAfter int -> "WHEN id =" <?> idx <+> "THEN" <?> now <+> "+" <?> int
               RerunAt time -> "WHEN id =" <?> idx <+> "THEN" <?> time
               MarkProcessed -> ""
-              Remove -> error "updateJob: Remove should've been filtered out"
+              Remove -> error "updateJob: 'Remove' should've been filtered out"
 
         idxRow = case ccMode of
           Standard -> error $ "'updateJob' should never be called when ccMode = " <> show Standard
@@ -388,14 +393,14 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         getAction (Ok action) = action
         getAction (Failed action) = action
 
-    -- | Update status of the jobs.
+    -- Update the status of jobs running in @'Standard'@ mode.
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
       runSQL_ $ smconcat
         [ "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
-        , "  WHERE id" <+> operator <+> "ANY (" <?> Array1 deletes <+> ")"
+        , "  WHERE id = ANY (" <?> Array1 deletes <+> ")"
         , ")"
         , "UPDATE" <+> raw ccJobsTable <+> "SET"
         , "  reserved_by = NULL"
@@ -408,12 +413,9 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
         , "    ELSE NULL"
         , "  END"
-        , "WHERE id" <+> operator <+> "ANY (" <?> Array1 (map fst updates) <+> ")"
+        , "WHERE id = ANY (" <?> Array1 (map fst updates) <+> ")"
         ]
       where
-        operator = case ccMode of
-          Standard -> "="
-          Duplicating _field -> "<="
         retryToSQL now (Left int) ids =
           ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
         retryToSQL _   (Right time) ids =
@@ -430,7 +432,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
               RerunAt time   -> M.insertWith (++) (Right time) [idx] iretries
               Remove         -> error
-                "updateJobs: Remove should've been filtered out"
+                "updateJobs: 'Remove' should've been filtered out"
 
         successes = foldr step [] updates
           where
