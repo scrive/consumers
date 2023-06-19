@@ -95,7 +95,7 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
       initialJobs <- liftBase $ readTVarIO runningJobsInfo
       (`fix` initialJobs) $ \loop jobsInfo -> do
         -- If jobs are still running, display info about them.
-        when (not $ M.null jobsInfo) $ do
+        unless (M.null jobsInfo) $ do
           logInfo "Waiting for running jobs" $ object [
               "job_id" .= showJobsInfo jobsInfo
             ]
@@ -108,7 +108,7 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
               -- If jobs info didn't change, wait for it to change.
               -- Otherwise loop so it either displays the new info
               -- or exits if there are no jobs running anymore.
-              if (newJobsInfo == jobsInfo)
+              if newJobsInfo == jobsInfo
                 then retry
                 else return $ loop newJobsInfo
       where
@@ -167,7 +167,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
     if ok
       then logInfo_ "Activity of the consumer updated"
       else do
-        logInfo_ $ "Consumer is not registered"
+        logInfo_ "Consumer is not registered"
         throwM ThreadKilled
   -- Freeing jobs locked by inactive consumers needs to happen
   -- exactly once, otherwise it's possible to free it twice, after
@@ -257,8 +257,12 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           let subtractJobs = atomically $ do
                 modifyTVar' runningJobs (subtract batchSize)
           void . forkP "batch processor"
-            . (`finally` subtractJobs) . restore $ do
-            mapM startJob batch >>= mapM joinJob >>= updateJobs
+            . (`finally` subtractJobs) . restore $
+            -- Ensures that we only process one job at a time
+            -- when running in @'Duplicating'@ mode.
+            case batch of
+              Left job -> startJob job >>= joinJob >>= updateJob
+              Right jobs -> mapM startJob jobs >>= mapM joinJob >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -269,7 +273,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
 
       return (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m (Either job [job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <- runSQL $ smconcat [
@@ -283,21 +287,39 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "RETURNING" <+> mintercalate ", " ccJobSelectors
         ]
       -- Decode lazily as we want the transaction to be as short as possible.
-      (, n) . F.toList . fmap ccJobFetcher <$> queryResult
+      (, n) . limitJobs . F.toList . fmap ccJobFetcher <$> queryResult
       where
+        -- Reserve a single job or a list of jobs depending
+        -- on which @'ccMode'@ the consumer is running in.
+        limitJobs = case ccMode of
+          Standard -> Right
+          Duplicating _field -> Left . head
         reservedJobs :: UTCTime -> SQL
-        reservedJobs now = smconcat [
-            "SELECT id FROM" <+> raw ccJobsTable
-          , "WHERE"
-          , "       reserved_by IS NULL"
-          , "       AND run_at IS NOT NULL"
-          , "       AND run_at <= " <?> now
-          , "       ORDER BY run_at"
-          , "LIMIT" <?> limit
-          , "FOR UPDATE SKIP LOCKED"
-          ]
+        reservedJobs now = case ccMode of
+          Standard -> smconcat [
+              "SELECT id FROM" <+> raw ccJobsTable
+            , "WHERE"
+            , "       reserved_by IS NULL"
+            , "       AND run_at IS NOT NULL"
+            , "       AND run_at <= " <?> now
+            , "       ORDER BY run_at"
+            , "LIMIT" <?> limit
+            , "FOR UPDATE SKIP LOCKED"
+            ]
+          Duplicating "id" -> error "Cannot duplicate on the primary key field 'id'"
+          Duplicating field -> smconcat [
+              "WITH latest_for_id AS"
+            , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
+            , "   ORDER BY run_at," <+> raw field <> ", id DESC LIMIT 1 FOR UPDATE SKIP LOCKED),"
+            , "   lock_all AS"
+            , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
+            , "   WHERE" <+> raw field <+> "= (SELECT" <+> raw field <+> "FROM latest_for_id)"
+            , "     AND id <= (SELECT id FROM latest_for_id)"
+            , "   FOR UPDATE SKIP LOCKED)"
+            , "SELECT id FROM lock_all"
+            ]
 
-    -- | Spawn each job in a separate thread.
+    -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
     startJob job = do
       (_, joinFork) <- mask $ \restore -> T.fork $ do
@@ -311,7 +333,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         unregisterJob tid = atomically $ do
            modifyTVar' runningJobsInfo $ M.delete tid
 
-    -- | Wait for all the jobs and collect their results.
+    -- Wait for all the jobs and collect their results.
     joinJob :: (job, m (T.Result Result)) -> m (idx, Result)
     joinJob (job, joinFork) = joinFork >>= \eres -> case eres of
       Right result -> return (ccJobIndex job, result)
@@ -325,14 +347,61 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
           ]
         return (ccJobIndex job, Failed action)
 
-    -- | Update status of the jobs.
+    -- Update the status of a job running in @'Duplicating'@ mode.
+    updateJob :: (idx, Result) -> m ()
+    updateJob (idx, result) = runDBT cs ts $ do
+      now <- currentTime
+      runSQL_ $ case result of
+          Ok Remove -> deleteQuery
+          -- TODO: Should we be deduplicating when a job fails with 'Remove' or only
+          -- remove the failing job?
+          Failed Remove -> deleteQuery
+          _ -> retryQuery now (isSuccess result) (getAction result)
+      where
+        deleteQuery = "DELETE FROM" <+> raw ccJobsTable <+> "WHERE" <+> raw idxRow <+> "<=" <?> idx
+
+        retryQuery now success action = smconcat
+          [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+          , "  reserved_by = NULL"
+          , ", run_at = CASE"
+          , "    WHEN FALSE THEN run_at"
+          ,      retryToSQL
+          , "    ELSE NULL" -- processed
+          , "  END"
+          , if success then smconcat
+              [ ", finished_at = CASE"
+              , "    WHEN id =" <?> idx <+> "THEN" <?> now
+              , "    ELSE NULL"
+              , "  END"
+              ]
+              else ""
+          , "WHERE" <+> raw idxRow <+> "<=" <?> idx
+          ]
+          where
+            retryToSQL = case action of
+              RerunAfter int -> "WHEN id =" <?> idx <+> "THEN" <?> now <+> "+" <?> int
+              RerunAt time -> "WHEN id =" <?> idx <+> "THEN" <?> time
+              MarkProcessed -> ""
+              Remove -> error "updateJob: 'Remove' should've been filtered out"
+
+        idxRow = case ccMode of
+          Standard -> error $ "'updateJob' should never be called when ccMode = " <> show Standard
+          Duplicating field -> field
+
+        isSuccess (Ok _) = True
+        isSuccess (Failed _) = False
+
+        getAction (Ok action) = action
+        getAction (Failed action) = action
+
+    -- Update the status of jobs running in @'Standard'@ mode.
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
-      runSQL_ $ smconcat [
-          "WITH removed AS ("
+      runSQL_ $ smconcat
+        [ "WITH removed AS ("
         , "  DELETE FROM" <+> raw ccJobsTable
-        , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
+        , "  WHERE id = ANY (" <?> Array1 deletes <+> ")"
         , ")"
         , "UPDATE" <+> raw ccJobsTable <+> "SET"
         , "  reserved_by = NULL"
@@ -345,7 +414,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
         , "    ELSE NULL"
         , "  END"
-        , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
+        , "WHERE id = ANY (" <?> Array1 (map fst updates) <+> ")"
         ]
       where
         retryToSQL now (Left int) ids =
@@ -353,7 +422,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
         retryToSQL _   (Right time) ids =
           ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
 
-        retries = foldr step M.empty $ map f updates
+        retries = foldr (step . f) M.empty updates
           where
             f (idx, result) = case result of
               Ok     action -> (idx, action)
@@ -364,7 +433,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
               RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
               RerunAt time   -> M.insertWith (++) (Right time) [idx] iretries
               Remove         -> error
-                "updateJobs: Remove should've been filtered out"
+                "updateJobs: 'Remove' should've been filtered out"
 
         successes = foldr step [] updates
           where

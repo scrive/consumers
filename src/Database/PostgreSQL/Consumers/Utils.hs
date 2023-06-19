@@ -27,7 +27,7 @@ finalize m action = do
 
 ----------------------------------------
 
--- | Exception thrown to a thread to stop its execution.
+-- Exception thrown to a thread to stop its execution.
 -- All exceptions other than 'StopExecution' thrown to
 -- threads spawned by 'forkP' and 'gforkP' are propagated
 -- back to the parent thread.
