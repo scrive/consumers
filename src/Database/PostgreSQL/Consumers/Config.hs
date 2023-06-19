@@ -42,7 +42,7 @@ data Result = Ok Action | Failed Action
 --     essentially allows one to race multiple jobs, only applying the result
 --     of whichever job finishes first.
 --
--- Note: One cannot duplicate on the primary key field named @'id'@ in the @'ccJobsTable'@.
+-- Note: One cannot duplicate on the primary key field named @id@ in the @'ccJobsTable'@.
 data Mode = Standard | Duplicating (RawSQL ())
   deriving (Show)
 
