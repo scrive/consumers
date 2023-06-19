@@ -306,6 +306,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
             , "LIMIT" <?> limit
             , "FOR UPDATE SKIP LOCKED"
             ]
+          Duplicating "id" -> error "Cannot duplicate on the primary key field 'id'"
           Duplicating field -> smconcat [
               "WITH latest_for_id AS"
             , "   (SELECT id," <+> raw field <+> "FROM" <+> raw ccJobsTable
