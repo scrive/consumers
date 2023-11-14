@@ -149,7 +149,7 @@ spawnListener cc cs semaphore =
 -- for activity and periodically updates its own.
 spawnMonitor
   :: forall m idx job. (MonadBaseControl IO m, MonadLog m, MonadMask m, MonadTime m,
-                        Show idx, FromSQL idx)
+                        Show idx, FromSQL idx, ToSQL idx)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
@@ -169,35 +169,42 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
       else do
         logInfo_ $ "Consumer is not registered"
         throwM ThreadKilled
-  -- Freeing jobs locked by inactive consumers needs to happen
-  -- exactly once, otherwise it's possible to free it twice, after
-  -- it was already marked as reserved by other consumer, so let's
-  -- run it in serializable transaction.
-  (inactiveConsumers, freedJobs) <- runDBT cs tsSerializable $ do
+  (inactiveConsumers, freedJobs) <- runDBT cs ts $ do
     now <- currentTime
-    -- Delete all inactive (assumed dead) consumers and get their ids.
-    runSQL_ $ smconcat [
-        "DELETE FROM" <+> raw ccConsumersTable
-      , "  WHERE last_activity +" <?> iminutes 1 <+> "<= " <?> now
-      , "    AND name =" <?> unRawSQL ccJobsTable
-      , "  RETURNING id::bigint"
+    -- Reserve all inactive (assumed dead) consumers and get their ids. We don't
+    -- delete them here, because if the coresponding reserved_by column in the
+    -- jobs table has an IMMEDIATE foreign key with the ON DELETE SET NULL
+    -- property, we will not be able to determine stuck jobs in the next step.
+    runSQL_ $ smconcat
+      [ "SELECT id::bigint"
+      , "FROM" <+> raw ccConsumersTable
+      , "WHERE last_activity +" <?> iminutes 1 <+> "<= " <?> now
+      , "  AND name =" <?> unRawSQL ccJobsTable
+      , "FOR UPDATE"
       ]
-    inactive :: [Int64] <- fetchMany runIdentity
-    -- Reset reserved jobs manually, do not rely on the foreign key constraint
-    -- to do its job. We also reset finished_at to correctly bump number of
-    -- attempts on the next try.
-    freedJobs :: [idx] <- if null inactive
-      then return []
-      else do
+    fetchMany (runIdentity @Int64) >>= \case
+      [] -> pure (0, [])
+      inactive -> do
+        -- Fetch all stuck jobs and run ccOnException on them to determine
+        -- actions. This is necessary e.g. to be able to apply exponential
+        -- backoff to them correctly.
         runSQL_ $ smconcat
-          [ "UPDATE" <+> raw ccJobsTable
-          , "SET reserved_by = NULL"
-          , "  , finished_at = NULL"
+          [ "SELECT" <+> mintercalate ", " ccJobSelectors
+          , "FROM" <+> raw ccJobsTable
           , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
-          , "RETURNING id"
+          , "FOR UPDATE"
           ]
-        fetchMany runIdentity
-    return (length inactive, freedJobs)
+        stuckJobs <- fetchMany ccJobFetcher
+        unless (null stuckJobs) $ do
+          results <- forM stuckJobs $ \job -> do
+            action <- lift $ ccOnException (toException ThreadKilled) job
+            pure (ccJobIndex job, Failed action)
+          runSQL_ $ updateJobsQuery ccJobsTable results now
+        runSQL_ $ smconcat
+          [ "DELETE FROM" <+> raw ccConsumersTable
+          , "WHERE id = ANY(" <?> Array1 inactive <+> ")"
+          ]
+        pure (length inactive, map ccJobIndex stuckJobs)
   when (inactiveConsumers > 0) $ do
     logInfo "Unregistered inactive consumers" $ object [
         "inactive_consumers" .= inactiveConsumers
@@ -207,10 +214,6 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
         "freed_jobs" .= map show freedJobs
       ]
   liftBase . threadDelay $ 30 * 1000000 -- wait 30 seconds
-  where
-    tsSerializable = ts {
-      tsIsolationLevel = Serializable
-    }
 
 -- | Spawn a thread that reserves and processes jobs.
 spawnDispatcher
@@ -329,56 +332,65 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     updateJobs :: [(idx, Result)] -> m ()
     updateJobs results = runDBT cs ts $ do
       now <- currentTime
-      runSQL_ $ smconcat [
-          "WITH removed AS ("
-        , "  DELETE FROM" <+> raw ccJobsTable
-        , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
-        , ")"
-        , "UPDATE" <+> raw ccJobsTable <+> "SET"
-        , "  reserved_by = NULL"
-        , ", run_at = CASE"
-        , "    WHEN FALSE THEN run_at"
-        ,      smconcat $ M.foldrWithKey (retryToSQL now) [] retries
-        , "    ELSE NULL" -- processed
-        , "  END"
-        , ", finished_at = CASE"
-        , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
-        , "    ELSE NULL"
-        , "  END"
-        , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
-        ]
-      where
-        retryToSQL now (Left int) ids =
-          ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
-        retryToSQL _   (Right time) ids =
-          ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
-
-        retries = foldr step M.empty $ map f updates
-          where
-            f (idx, result) = case result of
-              Ok     action -> (idx, action)
-              Failed action -> (idx, action)
-
-            step (idx, action) iretries = case action of
-              MarkProcessed  -> iretries
-              RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
-              RerunAt time   -> M.insertWith (++) (Right time) [idx] iretries
-              Remove         -> error
-                "updateJobs: Remove should've been filtered out"
-
-        successes = foldr step [] updates
-          where
-            step (idx, Ok     _) acc = idx : acc
-            step (_,   Failed _) acc =       acc
-
-        (deletes, updates) = foldr step ([], []) results
-          where
-            step job@(idx, result) (ideletes, iupdates) = case result of
-              Ok     Remove -> (idx : ideletes, iupdates)
-              Failed Remove -> (idx : ideletes, iupdates)
-              _             -> (ideletes, job : iupdates)
+      runSQL_ $ updateJobsQuery ccJobsTable results now
 
 ----------------------------------------
+
+-- | Generate a single SQL query for updating all given jobs.
+updateJobsQuery
+  :: (Show idx, ToSQL idx)
+  => RawSQL ()
+  -> [(idx, Result)]
+  -> UTCTime
+  -> SQL
+updateJobsQuery jobsTable results now = smconcat
+  [ "WITH removed AS ("
+  , "  DELETE FROM" <+> raw jobsTable
+  , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
+  , ")"
+  , "UPDATE" <+> raw jobsTable <+> "SET"
+  , "  reserved_by = NULL"
+  , ", run_at = CASE"
+  , "    WHEN FALSE THEN run_at"
+  ,      smconcat $ M.foldrWithKey retryToSQL [] retries
+  , "    ELSE NULL" -- processed
+  , "  END"
+  , ", finished_at = CASE"
+  , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
+  , "    ELSE NULL"
+  , "  END"
+  , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
+  ]
+  where
+    retryToSQL (Left int) ids =
+      ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
+    retryToSQL (Right time) ids =
+      ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
+
+    retries = foldr step M.empty $ map getAction updates
+      where
+        getAction (idx, result) = case result of
+          Ok     action -> (idx, action)
+          Failed action -> (idx, action)
+
+        step (idx, action) iretries = case action of
+          MarkProcessed  -> iretries
+          RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
+          RerunAt time   -> M.insertWith (++) (Right time) [idx] iretries
+          Remove         -> error "updateJobs: Remove should've been filtered out"
+
+    successes = foldr step [] updates
+      where
+        step (idx, Ok     _) acc = idx : acc
+        step (_,   Failed _) acc =       acc
+
+    (deletes, updates) = foldr step ([], []) results
+      where
+        step job@(idx, result) (ideletes, iupdates) = case result of
+          Ok     Remove -> (idx : ideletes, iupdates)
+          Failed Remove -> (idx : ideletes, iupdates)
+          _             -> (ideletes, job : iupdates)
+
 
 ts :: TransactionSettings
 ts = defaultTransactionSettings {
