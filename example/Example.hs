@@ -44,7 +44,7 @@ main = do
       ConnectionSource connSource = simpleSource connSettings
 
   -- Monad stack initialisation.
-  withSimpleStdOutLogger $ \logger ->
+  withStdOutLogger $ \logger ->
     runLogT "consumers-example" logger defaultLogLevel $
     runDBT connSource defaultTransactionSettings $ do
 

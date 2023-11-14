@@ -86,7 +86,7 @@ test = do
                                     { csConnInfo = connString }
       ConnectionSource connSource = simpleSource connSettings
 
-  withSimpleStdOutLogger $ \logger ->
+  withStdOutLogger $ \logger ->
     runTestEnv connSource logger $ do
       createTables
       idleSignal <- liftIO $ atomically $ newEmptyTMVar
