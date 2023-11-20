@@ -180,7 +180,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
       , "FROM" <+> raw ccConsumersTable
       , "WHERE last_activity +" <?> iminutes 1 <+> "<= " <?> now
       , "  AND name =" <?> unRawSQL ccJobsTable
-      , "FOR UPDATE"
+      , "FOR UPDATE SKIP LOCKED"
       ]
     fetchMany (runIdentity @Int64) >>= \case
       [] -> pure (0, [])
@@ -192,7 +192,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
           [ "SELECT" <+> mintercalate ", " ccJobSelectors
           , "FROM" <+> raw ccJobsTable
           , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
-          , "FOR UPDATE"
+          , "FOR UPDATE SKIP LOCKED"
           ]
         stuckJobs <- fetchMany ccJobFetcher
         unless (null stuckJobs) $ do
