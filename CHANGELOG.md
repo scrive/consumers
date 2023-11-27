@@ -1,11 +1,12 @@
-# consumers-2.3.1.0 (2023-??-??)
-* Drop support for advisory locks
-* Add support for GHC 9.6
+# consumers-2.3.1.0 (2023-11-27)
+* Drop support for advisory locks.
+* Add support for GHC 9.6 and 9.8.
+* Apply `ccOnException` when freeing jobs reserved by an inactive consumer.
 
 # consumers-2.3.0.0 (2022-07-07)
-* Update to monad-time 0.4.0.0
-* Support for GHC 9.2
-* Drop support for GHC < 8.8
+* Update to monad-time 0.4.0.0.
+* Support for GHC 9.2.
+* Drop support for GHC < 8.8.
 
 # consumers-2.2.0.6 (2021-10-22)
 * Improve efficiency of the SQL query that reserves jobs.
@@ -26,8 +27,8 @@
 * Support hpqtypes-1.7.0.0 and hpqtypes-extras-1.9.0.0.
 
 # consumers-2.2.0.0 (2019-02-19)
-* When jobs are relased from a dead consumer, reset their finished_at column
-* Start the consumer only when ccMaxRunningJobs >= 1
+* When jobs are relased from a dead consumer, reset their finished_at column.
+* Start the consumer only when ccMaxRunningJobs >= 1.
 
 # consumers-2.1.2.0 (2018-07-11)
 
