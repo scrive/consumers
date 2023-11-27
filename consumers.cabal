@@ -54,12 +54,14 @@ library
   default-extensions: DeriveDataTypeable
                     , FlexibleContexts
                     , GeneralizedNewtypeDeriving
+                    , LambdaCase
                     , NoImplicitPrelude
                     , OverloadedStrings
                     , RankNTypes
                     , RecordWildCards
                     , ScopedTypeVariables
                     , TupleSections
+                    , TypeApplications
                     , TypeFamilies
                     , UndecidableInstances
 
