@@ -4,12 +4,17 @@ module Database.PostgreSQL.Consumers.Utils (
   , stopExecution
   , forkP
   , gforkP
+  , hashedName
   ) where
 
 import Control.Concurrent.Lifted
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Trans.Control
+import Database.PostgreSQL.PQTypes.SQL.Raw
+import Database.PostgreSQL.PQTypes.Class
+import Data.Hashable
+import Data.Text
 import Data.Typeable
 import Prelude
 import qualified Control.Concurrent.Thread.Group.Lifted as TG
@@ -73,3 +78,6 @@ forkImpl ffork tname m = E.mask $ \release -> do
       E.Handler $ \StopExecution -> return ()
     , E.Handler $ (throwTo parent . ThrownFrom tname)
     ]
+
+hashedName :: Text -> RawSQL () -> QueryName
+hashedName baseName tableName = QueryName . (mappend "consumers")  . pack . show . hash $ unRawSQL tableName <> baseName
