@@ -158,7 +158,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
   runDBT cs ts $ do
     now <- currentTime
     -- Update last_activity of the consumer.
-    ok <- runSQL01 $ smconcat [
+    ok <- runPreparedSQL01 (hashedName "setActivity" ccConsumersTable) $ smconcat [
         "UPDATE" <+> raw ccConsumersTable
       , "SET last_activity = " <?> now
       , "WHERE id =" <?> cid
@@ -175,7 +175,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
     -- delete them here, because if the coresponding reserved_by column in the
     -- jobs table has an IMMEDIATE foreign key with the ON DELETE SET NULL
     -- property, we will not be able to determine stuck jobs in the next step.
-    runSQL_ $ smconcat
+    runPreparedSQL_ (hashedName "reserveConsumers" ccConsumersTable) $ smconcat
       [ "SELECT id::bigint"
       , "FROM" <+> raw ccConsumersTable
       , "WHERE last_activity +" <?> iminutes 1 <+> "<= " <?> now
@@ -188,7 +188,7 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
         -- Fetch all stuck jobs and run ccOnException on them to determine
         -- actions. This is necessary e.g. to be able to apply exponential
         -- backoff to them correctly.
-        runSQL_ $ smconcat
+        runPreparedSQL_ (hashedName "findStuck" ccJobsTable) $ smconcat
           [ "SELECT" <+> mintercalate ", " ccJobSelectors
           , "FROM" <+> raw ccJobsTable
           , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
@@ -199,8 +199,8 @@ spawnMonitor ConsumerConfig{..} cs cid = forkP "monitor" . forever $ do
           results <- forM stuckJobs $ \job -> do
             action <- lift $ ccOnException (toException ThreadKilled) job
             pure (ccJobIndex job, Failed action)
-          runSQL_ $ updateJobsQuery ccJobsTable results now
-        runSQL_ $ smconcat
+          runPreparedSQL_ (hashedName "updateJobs" ccJobsTable) $ updateJobsQuery ccJobsTable results now
+        runPreparedSQL_ (hashedName "removeInactive" ccConsumersTable) $ smconcat
           [ "DELETE FROM" <+> raw ccConsumersTable
           , "WHERE id = ANY(" <?> Array1 inactive <+> ")"
           ]
@@ -275,7 +275,7 @@ spawnDispatcher ConsumerConfig{..} cs cid semaphore
     reserveJobs :: Int -> m ([job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
-      n <- runSQL $ smconcat [
+      n <- runPreparedSQL (hashedName "setReservation" ccJobsTable) $ smconcat [
           "UPDATE" <+> raw ccJobsTable <+> "SET"
         , "  reserved_by =" <?> cid
         , ", attempts = CASE"

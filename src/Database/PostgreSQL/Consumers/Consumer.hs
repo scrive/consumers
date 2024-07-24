@@ -16,6 +16,7 @@ import Database.PostgreSQL.PQTypes
 import Prelude
 
 import Database.PostgreSQL.Consumers.Config
+import Database.PostgreSQL.Consumers.Utils
 
 -- | ID of a consumer.
 newtype ConsumerID = ConsumerID Int64
@@ -42,7 +43,7 @@ registerConsumer
   -> m ConsumerID
 registerConsumer ConsumerConfig{..} cs = runDBT cs ts $ do
   now <- currentTime
-  runSQL_ $ smconcat [
+  runPreparedSQL_ (hashedName "registerConsumer" ccConsumersTable) $ smconcat [
       "INSERT INTO" <+> raw ccConsumersTable
     , "(name, last_activity) VALUES (" <?> unRawSQL ccJobsTable <> ", " <?> now <> ")"
     , "RETURNING id"
@@ -63,12 +64,12 @@ unregisterConsumer
 unregisterConsumer ConsumerConfig{..} cs wid = runDBT cs ts $ do
   -- Free tasks manually in case there is no
   -- foreign key constraint on reserved_by,
-  runSQL_ $ smconcat [
+  runPreparedSQL_ (hashedName "deregisterJobs" ccJobsTable) $ smconcat [
       "UPDATE" <+> raw ccJobsTable
     , "   SET reserved_by = NULL"
     , " WHERE reserved_by =" <?> wid
     ]
-  runSQL_ $ smconcat [
+  runPreparedSQL_ (hashedName "removeConsumers" ccConsumersTable) $ smconcat [
       "DELETE FROM " <+> raw ccConsumersTable
     , "WHERE id =" <?> wid
     , "  AND name =" <?> unRawSQL ccJobsTable
