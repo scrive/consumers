@@ -4,7 +4,7 @@ module Database.PostgreSQL.Consumers.Utils (
   , stopExecution
   , forkP
   , gforkP
-  , hashedName
+  , preparedSqlName
   ) where
 
 import Control.Concurrent.Lifted
@@ -13,8 +13,7 @@ import Control.Monad.Catch
 import Control.Monad.Trans.Control
 import Database.PostgreSQL.PQTypes.SQL.Raw
 import Database.PostgreSQL.PQTypes.Class
-import Data.Hashable
-import Data.Text
+import qualified Data.Text as T
 import Data.Typeable
 import Prelude
 import qualified Control.Concurrent.Thread.Group.Lifted as TG
@@ -79,5 +78,5 @@ forkImpl ffork tname m = E.mask $ \release -> do
     , E.Handler $ (throwTo parent . ThrownFrom tname)
     ]
 
-hashedName :: Text -> RawSQL () -> QueryName
-hashedName baseName tableName = QueryName . (mappend "consumers")  . pack . show . hash $ unRawSQL tableName <> baseName
+preparedSqlName :: T.Text -> RawSQL () -> QueryName
+preparedSqlName baseName tableName = QueryName . T.take 63 $ baseName <> "$" <> unRawSQL tableName
