@@ -1,3 +1,4 @@
+cabal-version:      3.0
 name:               consumers
 version:            2.3.2.0
 synopsis:           Concurrent PostgreSQL data consumers
@@ -7,32 +8,52 @@ description:        Library for setting up concurrent consumers of data
                     declarative manner.
 
 homepage:           https://github.com/scrive/consumers
-license:            BSD3
+license:            BSD-3-Clause
 license-file:       LICENSE
 extra-source-files: CHANGELOG.md, README.md
 author:             Scrive AB
 maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
-                    Jonathan Jouty <jonathan@scrive.com>,
-                    Mikhail Glushenkov <mikhail@scrive.com>
+                    Jonathan Jouty <jonathan.jouty@scrive.com>
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
-cabal-version:      >=1.10
-tested-with:        GHC ==8.8.4 || ==8.10.7 || ==9.0.2 || ==9.2.8 || ==9.4.7 || ==9.6.3
-                     || ==9.8.1 || ==9.10.1
+tested-with:        GHC == { 8.10.7, 9.0.2, 9.2.8, 9.4.8, 9.6.6, 9.8.2, 9.10.1 }
 
-Source-repository head
-  Type:             git
-  Location:         https://github.com/scrive/consumers.git
+bug-reports:   https://github.com/scrive/consumers/issues
+source-repository head
+  type:             git
+  location:         https://github.com/scrive/consumers.git
+
+common language
+  ghc-options:      -Wall -Wcompat -Werror=prepositive-qualified-module
+
+  default-language: Haskell2010
+  default-extensions: DeriveDataTypeable
+                    , ExistentialQuantification
+                    , FlexibleContexts
+                    , GeneralizedNewtypeDeriving
+                    , ImportQualifiedPost
+                    , LambdaCase
+                    , MultiParamTypeClasses
+                    , OverloadedStrings
+                    , RankNTypes
+                    , RecordWildCards
+                    , ScopedTypeVariables
+                    , TupleSections
+                    , TypeApplications
+                    , TypeFamilies
+                    , UndecidableInstances
 
 library
+  import:           language
+
   exposed-modules:  Database.PostgreSQL.Consumers,
                     Database.PostgreSQL.Consumers.Config,
                     Database.PostgreSQL.Consumers.Consumer,
                     Database.PostgreSQL.Consumers.Components,
                     Database.PostgreSQL.Consumers.Utils
 
-  build-depends:    base              >= 4.13   && < 5
+  build-depends:    base              >= 4.14   && < 5
                   , containers        >= 0.5
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.11
@@ -50,31 +71,9 @@ library
 
   hs-source-dirs:   src
 
-  ghc-options:      -Wall
-
-  default-language: Haskell2010
-  default-extensions: DeriveDataTypeable
-                    , FlexibleContexts
-                    , GeneralizedNewtypeDeriving
-                    , LambdaCase
-                    , NoImplicitPrelude
-                    , OverloadedStrings
-                    , RankNTypes
-                    , RecordWildCards
-                    , ScopedTypeVariables
-                    , TupleSections
-                    , TypeApplications
-                    , TypeFamilies
-                    , UndecidableInstances
-
 test-suite consumers-example
-  -- Not quite a test suite, just a lazy way to disable this component
-  -- by default, but have Travis build it.
-  type:               exitcode-stdio-1.0
-  hs-source-dirs:     example
-  main-is:            Example.hs
-  default-language:   Haskell2010
-  ghc-options:        -Wall
+  ghc-options:        -threaded -Wall -Wcompat
+
   build-depends:      base,
                       consumers,
                       hpqtypes,
@@ -84,12 +83,18 @@ test-suite consumers-example
                       text-show,
                       transformers
 
-test-suite consumers-test
-  type:               exitcode-stdio-1.0
-  hs-source-dirs:     test
-  main-is:            Test.hs
+  hs-source-dirs:     example
+
   default-language:   Haskell2010
-  ghc-options:        -Wall
+
+  type:               exitcode-stdio-1.0
+  main-is:            Example.hs
+
+test-suite consumers-test
+  import:             language
+
+  ghc-options:        -threaded
+
   build-depends:      base,
                       consumers,
                       exceptions,
@@ -98,7 +103,6 @@ test-suite consumers-test
                       hpqtypes-extras,
                       log-base,
                       monad-control,
-                      monad-loops,
                       monad-time,
                       mtl,
                       stm,
@@ -107,3 +111,8 @@ test-suite consumers-test
                       time,
                       transformers,
                       transformers-base
+
+  hs-source-dirs:     test
+
+  type:               exitcode-stdio-1.0
+  main-is:            Test.hs
