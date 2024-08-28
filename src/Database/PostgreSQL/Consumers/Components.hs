@@ -96,9 +96,6 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
       { ccOnException = \ex job -> do
           -- Let asynchronous exceptions through (StopExecution in particular).
           ccOnException cc0 ex job `ES.catchAny` \handlerEx -> do
-            logAttention "ccOnException threw an exception" $ object
-              [ "exception" .= show handlerEx
-              ]
             -- Arbitrary delay, but better than letting exceptions from the
             -- handler through and potentially crashlooping the consumer:
             --
@@ -110,7 +107,13 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
             -- 3. The consumer is restarted, it tries to clean up stuck jobs
             -- (which include J), the cleanup code calls ccOnException on J and
             -- if it throws again, we're back to (2).
-            pure . RerunAfter $ idays 1
+            let action = RerunAfter $ idays 1
+            logAttention "ccOnException threw an exception" $ object
+              [ "job_id" .= show (ccJobIndex cc0 job)
+              , "exception" .= show handlerEx
+              , "action" .= show action
+              ]
+            pure action
       }
 
     waitForRunningJobs runningJobsInfo runningJobs = do
@@ -119,7 +122,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
         -- If jobs are still running, display info about them.
         when (not $ M.null jobsInfo) $ do
           logInfo "Waiting for running jobs" $ object [
-              "job_id" .= showJobsInfo jobsInfo
+              "job_ids" .= showJobsInfo jobsInfo
             ]
         join . atomically $ do
           jobs <- readTVar runningJobs
