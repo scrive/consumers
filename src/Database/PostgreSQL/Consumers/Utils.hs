@@ -4,12 +4,16 @@ module Database.PostgreSQL.Consumers.Utils (
   , stopExecution
   , forkP
   , gforkP
+  , preparedSqlName
   ) where
 
 import Control.Concurrent.Lifted
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Trans.Control
+import Database.PostgreSQL.PQTypes.SQL.Raw
+import Database.PostgreSQL.PQTypes.Class
+import qualified Data.Text as T
 import Data.Typeable
 import Prelude
 import qualified Control.Concurrent.Thread.Group.Lifted as TG
@@ -73,3 +77,6 @@ forkImpl ffork tname m = E.mask $ \release -> do
       E.Handler $ \StopExecution -> return ()
     , E.Handler $ (throwTo parent . ThrownFrom tname)
     ]
+
+preparedSqlName :: T.Text -> RawSQL () -> QueryName
+preparedSqlName baseName tableName = QueryName . T.take 63 $ baseName <> "$" <> unRawSQL tableName
