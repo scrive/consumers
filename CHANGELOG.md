@@ -1,6 +1,7 @@
 # consumers-2.3.2.0 (????-??-??)
 * Use prepared queries to improve parsing and planning time.
 * Prevent the consumer from crashlooping if `ccOnException` throws.
+* Drop support for GHC 8.8.
 
 # consumers-2.3.1.0 (2023-11-27)
 * Drop support for advisory locks.

@@ -1,5 +1,5 @@
-module Database.PostgreSQL.Consumers (
-    runConsumer
+module Database.PostgreSQL.Consumers
+  ( runConsumer
   , runConsumerWithIdleSignal
   , module Database.PostgreSQL.Consumers.Config
   , module Database.PostgreSQL.Consumers.Utils
