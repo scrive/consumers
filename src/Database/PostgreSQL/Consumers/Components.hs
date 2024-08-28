@@ -26,6 +26,7 @@ import Log
 import Prelude
 import qualified Control.Concurrent.STM as STM
 import qualified Control.Concurrent.Thread.Lifted as T
+import qualified Control.Exception.Safe as ES
 import qualified Data.Foldable as F
 import qualified Data.Map.Strict as M
 
@@ -63,7 +64,7 @@ runConsumerWithMaybeIdleSignal
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
-runConsumerWithMaybeIdleSignal cc cs mIdleSignal
+runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
   | ccMaxRunningJobs cc < 1 = do
       logInfo_ "ccMaxRunningJobs < 1, not starting the consumer"
       return $ return ()
@@ -91,13 +92,37 @@ runConsumerWithMaybeIdleSignal cc cs mIdleSignal
           stopExecution monitor
           unregisterConsumer cc cs cid
   where
+    cc = cc0
+      { ccOnException = \ex job -> do
+          -- Let asynchronous exceptions through (StopExecution in particular).
+          ccOnException cc0 ex job `ES.catchAny` \handlerEx -> do
+            -- Arbitrary delay, but better than letting exceptions from the
+            -- handler through and potentially crashlooping the consumer:
+            --
+            -- 1. A job J fails with an exception, ccOnException is called and
+            -- it throws an exception.
+            --
+            -- 2. The consumer goes down, J is now stuck.
+            --
+            -- 3. The consumer is restarted, it tries to clean up stuck jobs
+            -- (which include J), the cleanup code calls ccOnException on J and
+            -- if it throws again, we're back to (2).
+            let action = RerunAfter $ idays 1
+            logAttention "ccOnException threw an exception" $ object
+              [ "job_id" .= show (ccJobIndex cc0 job)
+              , "exception" .= show handlerEx
+              , "action" .= show action
+              ]
+            pure action
+      }
+
     waitForRunningJobs runningJobsInfo runningJobs = do
       initialJobs <- liftBase $ readTVarIO runningJobsInfo
       (`fix` initialJobs) $ \loop jobsInfo -> do
         -- If jobs are still running, display info about them.
         when (not $ M.null jobsInfo) $ do
           logInfo "Waiting for running jobs" $ object [
-              "job_id" .= showJobsInfo jobsInfo
+              "job_ids" .= showJobsInfo jobsInfo
             ]
         join . atomically $ do
           jobs <- readTVar runningJobs

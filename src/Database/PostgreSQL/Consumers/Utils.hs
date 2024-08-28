@@ -37,7 +37,9 @@ finalize m action = do
 -- back to the parent thread.
 data StopExecution = StopExecution
   deriving (Show, Typeable)
-instance Exception StopExecution
+instance Exception StopExecution where
+  toException = E.asyncExceptionToException
+  fromException = E.asyncExceptionFromException
 
 -- | Exception thrown from a child thread.
 data ThrownFrom = ThrownFrom String SomeException

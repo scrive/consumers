@@ -114,8 +114,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig {
 -- job in a separate DB transaction, otherwise you'll have to remember
 -- to commit your changes to the database manually.
 , ccProcessJob            :: !(job -> m Result)
--- | Action taken if a job processing function throws an exception.
--- Note that if this action throws an exception, the consumer goes
--- down, so it's best to ensure that it doesn't throw.
+-- | Action taken if a job processing function throws an exception. For
+-- robustness it's best to ensure that it doesn't throw. If it does, the
+-- exception will be logged and the job in question postponed by a day.
 , ccOnException           :: !(SomeException -> job -> m Action)
 }

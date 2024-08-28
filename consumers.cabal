@@ -42,6 +42,7 @@ library
                   , monad-control     >= 1.0
                   , monad-time        >= 0.4
                   , mtl               >= 2.2
+                  , safe-exceptions   >= 0.1.7
                   , stm               >= 2.4
                   , text              >= 1.2
                   , time              >= 1.6
