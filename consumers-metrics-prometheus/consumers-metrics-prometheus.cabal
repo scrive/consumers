@@ -47,15 +47,10 @@ library
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.11
                   , lifted-base       >= 0.2
-                  , lifted-threads    >= 1.0
                   , log-base          >= 0.11
                   , monad-control     >= 1.0
                   , monad-time        >= 0.4
-                  , mtl               >= 2.2
                   , safe-exceptions   >= 0.1.7
-                  , stm               >= 2.4
-                  , text              >= 1.2
-                  , time              >= 1.6
                   , transformers-base >= 0.4
                   , prometheus-client >= 1.1.0
 
