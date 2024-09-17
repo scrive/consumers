@@ -1,0 +1,70 @@
+cabal-version:      3.0
+name:               consumers-metrics-prometheus
+version:            1.0.0.0
+synopsis:           TODO
+
+description:        TODO
+
+homepage:           https://github.com/scrive/consumers
+license:            BSD-3-Clause
+license-file:       LICENSE
+extra-source-files: CHANGELOG.md, README.md
+author:             Scrive AB
+maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
+                    Jonathan Jouty <jonathan.jouty@scrive.com>
+copyright:          Scrive AB
+category:           Concurrency, Database
+build-type:         Simple
+tested-with:        GHC == { 8.10.7, 9.0.2, 9.2.8, 9.4.8, 9.6.6, 9.8.2, 9.10.1 }
+
+bug-reports:   https://github.com/scrive/consumers/issues
+source-repository head
+  type:             git
+  location:         https://github.com/scrive/consumers.git
+
+common language
+  ghc-options:      -Wall -Wcompat -Werror=prepositive-qualified-module
+
+  default-language: Haskell2010
+  default-extensions: DeriveDataTypeable
+                    , ExistentialQuantification
+                    , FlexibleContexts
+                    , GeneralizedNewtypeDeriving
+                    , ImportQualifiedPost
+                    , LambdaCase
+                    , MultiParamTypeClasses
+                    , OverloadedStrings
+                    , RankNTypes
+                    , RecordWildCards
+                    , ScopedTypeVariables
+                    , TupleSections
+                    , TypeApplications
+                    , TypeFamilies
+                    , UndecidableInstances
+                    , NumericUnderscores
+                    , DuplicateRecordFields
+                    , OverloadedRecordDot
+
+library
+  import:           language
+
+  exposed-modules:  Database.PostgreSQL.Consumers.Instrumented
+
+  build-depends:    base              >= 4.14   && < 5
+                  , consumers         >= 2.3
+                  , exceptions        >= 0.10
+                  , hpqtypes          >= 1.11
+                  , lifted-base       >= 0.2
+                  , lifted-threads    >= 1.0
+                  , log-base          >= 0.11
+                  , monad-control     >= 1.0
+                  , monad-time        >= 0.4
+                  , mtl               >= 2.2
+                  , safe-exceptions   >= 0.1.7
+                  , stm               >= 2.4
+                  , text              >= 1.2
+                  , time              >= 1.6
+                  , transformers-base >= 0.4
+                  , prometheus-client >= 1.1.0
+
+  hs-source-dirs:   src
