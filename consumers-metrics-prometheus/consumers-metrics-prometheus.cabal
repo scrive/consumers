@@ -27,24 +27,15 @@ common language
   ghc-options:      -Wall -Wcompat -Werror=prepositive-qualified-module
 
   default-language: Haskell2010
-  default-extensions: DeriveDataTypeable
-                    , ExistentialQuantification
+  default-extensions: OverloadedStrings
+                    , DisambiguateRecordFields
+                    , DuplicateRecordFields
                     , FlexibleContexts
-                    , GeneralizedNewtypeDeriving
+                    , NamedFieldPuns
                     , ImportQualifiedPost
-                    , LambdaCase
-                    , MultiParamTypeClasses
-                    , OverloadedStrings
-                    , RankNTypes
+                    , NumericUnderscores
                     , RecordWildCards
                     , ScopedTypeVariables
-                    , TupleSections
-                    , TypeApplications
-                    , TypeFamilies
-                    , UndecidableInstances
-                    , NumericUnderscores
-                    , DuplicateRecordFields
-                    , OverloadedRecordDot
 
 library
   import:           language

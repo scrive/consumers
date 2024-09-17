@@ -162,7 +162,7 @@ runMetricsCollection
   -> ConsumerMetrics
   -> ConsumerConfig m idx job
   -> m ThreadId
-runMetricsCollection connSource metrics config = localDomain "metrics-collection" $ fork collectLoop
+runMetricsCollection connSource metrics@ConsumerMetrics {..} config = localDomain "metrics-collection" $ fork collectLoop
   where
     collectLoop = do
       seconds <- handleAny handleEx collect
@@ -173,9 +173,9 @@ runMetricsCollection connSource metrics config = localDomain "metrics-collection
       logAttention "Exception while running metrics-collection" $
         object
           [ "exception" .= show e
-          , "rerun_seconds" .= metrics.collectDegradeSeconds
+          , "rerun_seconds" .= collectDegradeSeconds
           ]
-      pure metrics.collectDegradeSeconds
+      pure collectDegradeSeconds
 
     collect = do
       logInfo_ "Collecting consumer metrics"
@@ -184,16 +184,16 @@ runMetricsCollection connSource metrics config = localDomain "metrics-collection
       t2 <- monotonicTime
       let runtime = t2 - t1
       -- Graceful degrade if things take too long
-      if runtime < metrics.collectDegradeThresholdSeconds
-        then pure metrics.collectSeconds
+      if runtime < collectDegradeThresholdSeconds
+        then pure collectSeconds
         else do
           logAttention "Consumer metrics collection took long" $
             object
               [ "runtime" .= runtime
-              , "threshold" .= metrics.collectDegradeThresholdSeconds
-              , "rerun_seconds" .= metrics.collectDegradeSeconds
+              , "threshold" .= collectDegradeThresholdSeconds
+              , "rerun_seconds" .= collectDegradeSeconds
               ]
-          pure metrics.collectDegradeSeconds
+          pure collectDegradeSeconds
 
 -- | Collect and report "queue" metrics for a given configuration
 collectMetrics
@@ -205,24 +205,24 @@ collectMetrics
   -> ConsumerMetrics
   -> ConsumerConfig m idx job
   -> m ()
-collectMetrics connSource metric config = runDBT connSource defaultTransactionSettings $ do
-  let jobName = unRawSQL config.ccJobsTable
+collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccConsumersTable} = runDBT connSource defaultTransactionSettings $ do
+  let jobName = unRawSQL ccJobsTable
 
   info <- do
     runSQL_ $
       "SELECT count(id)::float8 FROM "
-        <> raw config.ccConsumersTable
-        <> " WHERE name =" <?> unRawSQL config.ccJobsTable
+        <> raw ccConsumersTable
+        <> " WHERE name =" <?> unRawSQL ccJobsTable
     fetchOne runIdentity
-  liftBase $ Prom.withLabel metric.jobInfo jobName (`Prom.setGauge` info)
+  liftBase $ Prom.withLabel jobInfo jobName (`Prom.setGauge` info)
 
   overdue <- do
     runSQL_ $
       "SELECT count(id)::float8 FROM "
-        <> raw config.ccJobsTable
+        <> raw ccJobsTable
         <> " WHERE run_at <= now() AND reserved_by IS NULL"
     fetchOne runIdentity
-  liftBase $ Prom.withLabel metric.jobsOverdue jobName (`Prom.setGauge` overdue)
+  liftBase $ Prom.withLabel jobsOverdue jobName (`Prom.setGauge` overdue)
 
 -- | Alter a configuration to collect "job" metrics on 'ccProcessJob'
 instrumentConsumerConfig
@@ -234,7 +234,7 @@ instrumentConsumerConfig
   => ConsumerMetrics
   -> ConsumerConfig m idx job
   -> ConsumerConfig m idx job
-instrumentConsumerConfig metrics ConsumerConfig {..} =
+instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
   ConsumerConfig {ccProcessJob = ccProcessJob', ..}
   where
     jobName = unRawSQL ccJobsTable
@@ -249,7 +249,7 @@ instrumentConsumerConfig metrics ConsumerConfig {..} =
     -- to the consumer's `ccOnException` (and thus potentially change the
     -- result of the job).
     ccProcessJob' job = do
-      handleAny handleEx . liftBase $ Prom.withLabel metrics.jobsReserved jobName Prom.incCounter
+      handleAny handleEx . liftBase $ Prom.withLabel jobsReserved jobName Prom.incCounter
       fst <$> generalBracket monotonicTime reportJob (const $ ccProcessJob job)
 
     reportJob t1 jobExit = handleAny handleEx $ do
@@ -260,6 +260,6 @@ instrumentConsumerConfig metrics ConsumerConfig {..} =
             ExitCaseSuccess (Failed _) -> "failed"
             ExitCaseException _ -> "exception"
             ExitCaseAbort -> "abort"
-      liftBase $ Prom.withLabel metrics.jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
+      liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
 
     handleEx e = logAttention "Exception while instrumenting job" $ object ["exception" .= show e]
