@@ -164,7 +164,8 @@ jobs:
       - name: initial cabal.project for sdist
         run: |
           touch cabal.project
-          echo "packages: $GITHUB_WORKSPACE/source/." >> cabal.project
+          echo "packages: $GITHUB_WORKSPACE/source/consumers" >> cabal.project
+          echo "packages: $GITHUB_WORKSPACE/source/consumers-metrics-prometheus" >> cabal.project
           cat cabal.project
       - name: sdist
         run: |
@@ -178,15 +179,20 @@ jobs:
         run: |
           PKGDIR_consumers="$(find "$GITHUB_WORKSPACE/unpacked" -maxdepth 1 -type d -regex '.*/consumers-[0-9.]*')"
           echo "PKGDIR_consumers=${PKGDIR_consumers}" >> "$GITHUB_ENV"
+          PKGDIR_consumers_metrics_prometheus="$(find "$GITHUB_WORKSPACE/unpacked" -maxdepth 1 -type d -regex '.*/consumers-metrics-prometheus-[0-9.]*')"
+          echo "PKGDIR_consumers_metrics_prometheus=${PKGDIR_consumers_metrics_prometheus}" >> "$GITHUB_ENV"
           rm -f cabal.project cabal.project.local
           touch cabal.project
           touch cabal.project.local
           echo "packages: ${PKGDIR_consumers}" >> cabal.project
+          echo "packages: ${PKGDIR_consumers_metrics_prometheus}" >> cabal.project
           echo "package consumers" >> cabal.project
+          echo "    ghc-options: -Werror=missing-methods" >> cabal.project
+          echo "package consumers-metrics-prometheus" >> cabal.project
           echo "    ghc-options: -Werror=missing-methods" >> cabal.project
           cat >> cabal.project <<EOF
           EOF
-          $HCPKG list --simple-output --names-only | perl -ne 'for (split /\s+/) { print "constraints: any.$_ installed\n" unless /^(consumers)$/; }' >> cabal.project.local
+          $HCPKG list --simple-output --names-only | perl -ne 'for (split /\s+/) { print "constraints: $_ installed\n" unless /^(consumers|consumers-metrics-prometheus)$/; }' >> cabal.project.local
           cat cabal.project
           cat cabal.project.local
       - name: dump install plan
@@ -215,6 +221,8 @@ jobs:
       - name: cabal check
         run: |
           cd ${PKGDIR_consumers} || false
+          ${CABAL} -vnormal check
+          cd ${PKGDIR_consumers_metrics_prometheus} || false
           ${CABAL} -vnormal check
       - name: haddock
         run: |
