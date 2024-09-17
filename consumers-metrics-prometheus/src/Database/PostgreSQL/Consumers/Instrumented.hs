@@ -1,10 +1,10 @@
-module Database.PostgreSQL.Consumers.Instrumented (
-  ConsumerMetricsConfig (..),
-  defaultConsumerMetricsConfig,
-  ConsumerMetrics,
-  registerConsumerMetrics,
-  runInstrumentedConsumer,
-) where
+module Database.PostgreSQL.Consumers.Instrumented
+  ( ConsumerMetricsConfig (..)
+  , defaultConsumerMetricsConfig
+  , ConsumerMetrics
+  , registerConsumerMetrics
+  , runInstrumentedConsumer
+  ) where
 
 import Control.Concurrent.Lifted
 import Control.Exception.Safe
@@ -51,38 +51,38 @@ data ConsumerMetrics = ConsumerMetrics
 registerConsumerMetrics :: MonadBaseControl IO m => ConsumerMetricsConfig -> m ConsumerMetrics
 registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
   jobInfo <-
-    Prom.register $
-      Prom.vector "job_name" $
-        Prom.gauge
-          Prom.Info
-            { metricName = "consumers_job_info"
-            , metricHelp = "The number of workers registered for a given job_name"
-            }
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.gauge
+        Prom.Info
+          { metricName = "consumers_job_info"
+          , metricHelp = "The number of workers registered for a given job_name"
+          }
   jobsOverdue <-
-    Prom.register $
-      Prom.vector "job_name" $
-        Prom.gauge
-          Prom.Info
-            { metricName = "consumers_jobs_overdue"
-            , metricHelp = "The current number of jobs overdue, by job_name"
-            }
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.gauge
+        Prom.Info
+          { metricName = "consumers_jobs_overdue"
+          , metricHelp = "The current number of jobs overdue, by job_name"
+          }
   jobsReserved <-
-    Prom.register $
-      Prom.vector "job_name" $
-        Prom.counter
-          Prom.Info
-            { metricName = "consumers_jobs_reserved_total"
-            , metricHelp = "The total number of job reserved, by job_name"
-            }
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.counter
+        Prom.Info
+          { metricName = "consumers_jobs_reserved_total"
+          , metricHelp = "The total number of job reserved, by job_name"
+          }
   jobsExecution <-
-    Prom.register $
-      Prom.vector ("job_name", "job_result") $
-        Prom.histogram
-          Prom.Info
-            { metricName = "consumers_job_execution_seconds"
-            , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result"
-            }
-          jobExecutionBuckets
+    Prom.register
+      . Prom.vector ("job_name", "job_result")
+      $ Prom.histogram
+        Prom.Info
+          { metricName = "consumers_job_execution_seconds"
+          , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result"
+          }
+        jobExecutionBuckets
   pure $ ConsumerMetrics {..}
 
 -- | Run a 'ConsumerConfig', but with instrumentation added.
@@ -114,12 +114,12 @@ runInstrumentedConsumer metrics config connSource = do
 
 -- | Spawns a new thread to run "queue" metrics collection for the given configuration
 runMetricsCollection
-  :: forall m idx job .
-   ( MonadBaseControl IO m
-   , MonadMask m
-   , MonadTime m
-   , MonadLog m
-   )
+  :: forall m idx job
+   . ( MonadBaseControl IO m
+     , MonadMask m
+     , MonadTime m
+     , MonadLog m
+     )
   => ConnectionSourceM m
   -> ConsumerMetrics
   -> ConsumerConfig m idx job
@@ -211,7 +211,7 @@ instrumentConsumerConfig metrics ConsumerConfig {..} =
     -- to the consumer's `ccOnException` (and thus potentially change the
     -- result of the job).
     ccProcessJob' job = do
-      handleAny handleEx $ liftBase $ Prom.withLabel metrics.jobsReserved jobName Prom.incCounter
+      handleAny handleEx . liftBase $ Prom.withLabel metrics.jobsReserved jobName Prom.incCounter
       fst <$> generalBracket monotonicTime reportJob (const $ ccProcessJob job)
 
     reportJob t1 jobExit = handleAny handleEx $ do
