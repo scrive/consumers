@@ -1,9 +1,17 @@
+{-|
+Provides seamless instrumentation of your existing @consumers@ using Prometheus
+(see the [`consumers`](https://hackage.haskell.org/package/consumers) library
+for usage).
+-}
 module Database.PostgreSQL.Consumers.Instrumented
-  ( ConsumerMetricsConfig (..)
+  ( -- * Instrument
+    runInstrumentedConsumer
+    -- ** Configuration
   , defaultConsumerMetricsConfig
+  , ConsumerMetricsConfig (..)
+    -- ** Metrics
   , ConsumerMetrics
   , registerConsumerMetrics
-  , runInstrumentedConsumer
   ) where
 
 import Control.Concurrent.Lifted
@@ -21,14 +29,23 @@ data ConsumerMetricsConfig = ConsumerMetricsConfig
   { collectSeconds :: Int
   -- ^ Collection interval in seconds
   , jobExecutionBuckets :: [Prom.Bucket]
-  -- ^ Buckets to use for the 'jobExecution' 'Prom.Histogram'
+  -- ^ Buckets to use for the 'jobExecution' histogram
   , collectDegradeThresholdSeconds :: Double
-  -- ^ Log @attention@ and graceful degrade if collection takes longer than @x@ seconds
+  -- ^ @logAttention@ and graceful degrade if collection takes longer than @x@ seconds
   , collectDegradeSeconds :: Int
   -- ^ Degraded collection interval in seconds
   }
 
--- | TODO document
+-- | Hopefully sensible defaults that you can use
+--
+-- @
+--  ConsumerMetricsConfig
+--    { collectSeconds = 15
+--    , jobExecutionBuckets = [0.01, 0.05, 0.1, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+--    , collectDegradeThresholdSeconds = 0.1
+--    , collectDegradeSeconds = 60
+--    }
+-- @
 defaultConsumerMetricsConfig :: ConsumerMetricsConfig
 defaultConsumerMetricsConfig =
   ConsumerMetricsConfig
@@ -38,6 +55,22 @@ defaultConsumerMetricsConfig =
     , collectDegradeSeconds = 60
     }
 
+-- | Metrics store for the following Prometheus metrics:
+--
+-- @
+-- # HELP consumers_job_execution_seconds Execution time of jobs in seconds, by job_name, includes the job_result
+-- # TYPE consumers_job_execution_seconds histogram
+--
+-- # HELP consumers_jobs_reserved_total The total number of job reserved, by job_name
+-- # TYPE consumers_jobs_reserved_total counter
+--
+-- # HELP consumers_jobs_overdue The current number of jobs overdue, by job_name
+-- # TYPE consumers_jobs_overdue gauge
+--
+-- # HELP consumers_job_info The number of workers registered for a given job_name
+-- # TYPE consumers_job_info gauge
+-- @
+--
 data ConsumerMetrics = ConsumerMetrics
   { collectSeconds :: Int
   , collectDegradeThresholdSeconds :: Double
@@ -87,8 +120,13 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
 
 -- | Run a 'ConsumerConfig', but with instrumentation added.
 --
--- This will spawn a thread to collect "queue" metrics, and alter
--- 'ccProcessJob' to collect "job" metrics.
+-- This should be used in place of 'runConsumer'.
+-- Use 'registerConsumerMetrics' to create the metrics.
+--
+-- A thread will spawned to collect "queue" metrics every 'collectSeconds', and
+-- an altered @ccProcessJob@ will be run that collects "job" metrics.
+--
+-- See 'ConsumerMetrics' for more details on the metrics collected.
 runInstrumentedConsumer
   :: forall m idx job
    . ( Eq idx

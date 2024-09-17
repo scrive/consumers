@@ -32,6 +32,10 @@ import Log
 -- | Run the consumer. The purpose of the returned monadic action is to wait for
 -- currently processed jobs and clean up. This function is best used in
 -- conjunction with 'finalize' to seamlessly handle the finalization.
+--
+-- If you want to add metrics, see the
+-- [@consumers-metrics-prometheus@](https://hackage.haskell.org/package/consumers-metrics-prometheus)
+-- package to seamlessly instrument your consumer.
 runConsumer
   :: ( MonadBaseControl IO m
      , MonadLog m
