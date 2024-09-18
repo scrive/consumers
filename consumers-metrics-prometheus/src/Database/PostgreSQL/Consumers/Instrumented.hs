@@ -1,14 +1,15 @@
-{-|
-Provides seamless instrumentation of your existing @consumers@ using Prometheus
-(see the [`consumers`](https://hackage.haskell.org/package/consumers) library
-for usage).
--}
+-- |
+-- Provides seamless instrumentation of your existing @consumers@ using Prometheus
+-- (see the [`consumers`](https://hackage.haskell.org/package/consumers) library
+-- for usage).
 module Database.PostgreSQL.Consumers.Instrumented
   ( -- * Instrument
     runInstrumentedConsumer
+
     -- ** Configuration
   , defaultConsumerMetricsConfig
   , ConsumerMetricsConfig (..)
+
     -- ** Metrics
   , ConsumerMetrics
   , registerConsumerMetrics
@@ -70,7 +71,6 @@ defaultConsumerMetricsConfig =
 -- # HELP consumers_job_info The number of workers registered for a given job_name
 -- # TYPE consumers_job_info gauge
 -- @
---
 data ConsumerMetrics = ConsumerMetrics
   { collectSeconds :: Int
   , collectDegradeThresholdSeconds :: Double
