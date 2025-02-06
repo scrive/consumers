@@ -21,7 +21,6 @@ import Log.Backend.StandardOutput
 import System.Environment
 import System.Exit
 import Test.HUnit qualified as T
-import TextShow
 
 data TestEnvSt = TestEnvSt
   { teCurrentTime :: UTCTime
@@ -162,6 +161,7 @@ test = do
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }
 
     putJob :: Int32 -> TestEnv ()
@@ -184,13 +184,7 @@ test = do
       pure (Ok Remove)
 
     handleException :: SomeException -> (Int64, Int32) -> TestEnv Action
-    handleException exc (idx, _countdown) = do
-      logAttention "Job failed" $
-        object
-          [ "job_id" .= showt idx
-          , "exception" .= showt exc
-          ]
-      pure . RerunAfter $ imicroseconds 500000
+    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
 
 jobsTable :: Table
 jobsTable =

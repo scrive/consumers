@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers
-version:            2.3.2.0
+version:            2.3.3.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -54,6 +54,7 @@ library
                     Database.PostgreSQL.Consumers.Utils
 
   build-depends:    base              >= 4.14   && < 5
+                  , aeson             >= 2.0
                   , containers        >= 0.5
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.11
@@ -79,9 +80,7 @@ test-suite consumers-example
                       hpqtypes,
                       hpqtypes-extras,
                       log-base,
-                      text,
-                      text-show,
-                      transformers
+                      text
 
   hs-source-dirs:     example
 
@@ -107,7 +106,6 @@ test-suite consumers-test
                       mtl,
                       stm,
                       text,
-                      text-show,
                       time,
                       transformers,
                       transformers-base

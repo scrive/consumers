@@ -1,3 +1,6 @@
+# consumers-2.3.3.0 (2025-??-??)
+* Add `ccJobLogData` to `ConsumerConfig` to improve logging.
+
 # consumers-2.3.2.0 (2024-08-30)
 * Use prepared queries to improve parsing and planning time.
 * Prevent the consumer from crashlooping if `ccOnException` throws.

@@ -21,7 +21,6 @@ import Log
 import Log.Backend.StandardOutput
 import System.Environment
 import System.Exit
-import TextShow
 
 -- | Main application monad. See the 'log-base' and the 'hpqtypes'
 -- packages for documentation on 'DBT' and 'LogT'.
@@ -118,6 +117,7 @@ main = do
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
         , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }
 
     -- Add a job to the consumer's queue.
@@ -141,13 +141,7 @@ main = do
     -- failure in different ways, such as: remove the job from the
     -- queue, mark it as processed, or schedule it for rerun.
     handleException :: SomeException -> (Int64, T.Text) -> AppM Action
-    handleException exc (idx, _msg) = do
-      logAttention "Job failed" $
-        object
-          [ "job_id" .= showt idx
-          , "exception" .= showt exc
-          ]
-      pure . RerunAfter $ imicroseconds 500000
+    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.
