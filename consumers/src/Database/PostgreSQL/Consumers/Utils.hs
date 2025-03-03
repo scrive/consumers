@@ -16,7 +16,6 @@ import Control.Monad.Catch
 import Control.Monad.Trans.Control
 import Data.Maybe
 import Data.Text qualified as T
-import Data.Typeable
 import Database.PostgreSQL.PQTypes.Class
 import Database.PostgreSQL.PQTypes.SQL.Raw
 
@@ -36,7 +35,7 @@ finalize m action = do
 -- All exceptions other than 'StopExecution' thrown to threads spawned by
 -- 'forkP' and 'gforkP' are propagated back to the parent thread.
 data StopExecution = StopExecution
-  deriving (Show, Typeable)
+  deriving (Show)
 
 instance Exception StopExecution where
   toException = E.asyncExceptionToException
@@ -44,7 +43,7 @@ instance Exception StopExecution where
 
 -- | Exception thrown from a child thread.
 data ThrownFrom = ThrownFrom String SomeException
-  deriving (Show, Typeable)
+  deriving (Show)
 
 instance Exception ThrownFrom
 
