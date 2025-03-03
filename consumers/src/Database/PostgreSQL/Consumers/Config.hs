@@ -5,6 +5,7 @@ module Database.PostgreSQL.Consumers.Config
   ) where
 
 import Control.Exception (SomeException)
+import Data.Aeson.Types qualified as A
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
@@ -113,4 +114,6 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Action taken if a job processing function throws an exception. For
   -- robustness it's best to ensure that it doesn't throw. If it does, the
   -- exception will be logged and the job in question postponed by a day.
+  , ccJobLogData :: !(job -> [A.Pair])
+  -- ^ Data to attach to each log message while processing a job.
   }

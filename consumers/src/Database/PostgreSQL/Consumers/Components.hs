@@ -123,9 +123,17 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
   where
     cc =
       cc0
-        { ccOnException = \ex job -> do
+        { ccOnException = \ex job -> localData (ccJobLogData cc0 job) $ do
+            let doOnException = do
+                  action <- ccOnException cc0 ex job
+                  logInfo "Unexpected exception caught while processing job" $
+                    object
+                      [ "exception" .= show ex
+                      , "action" .= show action
+                      ]
+                  pure action
             -- Let asynchronous exceptions through (StopExecution in particular).
-            ccOnException cc0 ex job `ES.catchAny` \handlerEx -> do
+            doOnException `ES.catchAny` \handlerEx -> do
               -- Arbitrary delay, but better than letting exceptions from the
               -- handler through and potentially crashlooping the consumer:
               --
@@ -140,8 +148,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
               let action = RerunAfter $ idays 1
               logAttention "ccOnException threw an exception" $
                 object
-                  [ "job_id" .= show (ccJobIndex cc0 job)
-                  , "exception" .= show handlerEx
+                  [ "exception" .= show handlerEx
                   , "action" .= show action
                   ]
               pure action
@@ -391,7 +398,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
       (_, joinFork) <- mask $ \restore -> T.fork $ do
         tid <- myThreadId
         bracket_ (registerJob tid) (unregisterJob tid) . restore $ do
-          ccProcessJob job
+          localData (ccJobLogData job) $ ccProcessJob job
       pure (job, joinFork)
       where
         registerJob tid = atomically $ do
@@ -406,12 +413,6 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
         Right result -> pure (ccJobIndex job, result)
         Left ex -> do
           action <- ccOnException ex job
-          logAttention "Unexpected exception caught while processing job" $
-            object
-              [ "job_id" .= show (ccJobIndex job)
-              , "exception" .= show ex
-              , "action" .= show action
-              ]
           pure (ccJobIndex job, Failed action)
 
     -- Update status of the jobs.
