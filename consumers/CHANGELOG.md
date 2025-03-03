@@ -1,4 +1,4 @@
-# consumers-2.3.3.0 (2025-??-??)
+# consumers-2.3.3.0 (2025-03-03)
 * Add `ccJobLogData` to `ConsumerConfig` to improve logging.
 
 # consumers-2.3.2.0 (2024-08-30)
