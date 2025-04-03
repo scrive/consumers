@@ -78,7 +78,7 @@ test-suite consumers-example
   build-depends:      base,
                       consumers,
                       hpqtypes,
-                      hpqtypes-extras,
+                      hpqtypes-extras >= 1.17.0.1,
                       log-base,
                       text
 

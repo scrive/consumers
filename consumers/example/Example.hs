@@ -69,7 +69,7 @@ main = do
       prog <- getProgName
       putStrLn $ "Usage: " <> prog <> " <connection info string>"
 
-    tables = [consumersTable, jobsTable]
+    definitions = emptyDbDefinitions {dbTables = [consumersTable, jobsTable]}
     -- NB: order of migrations is important.
     migrations =
       [ createTableMigration consumersTable
@@ -80,25 +80,17 @@ main = do
     createTables = do
       migrateDatabase
         defaultExtrasOptions
-        [] -- extensions
-        [] -- composites
-        [] -- domains
-        tables
+        definitions
         migrations
       checkDatabase
         defaultExtrasOptions
-        [] -- composites
-        [] -- domains
-        tables
+        definitions
 
     dropTables :: AppM ()
     dropTables = do
       migrateDatabase
         defaultExtrasOptions
-        [] -- extensions
-        [] -- composites
-        [] -- domains
-        [] -- tables
+        emptyDbDefinitions
         [ dropTableMigration jobsTable
         , dropTableMigration consumersTable
         ]
