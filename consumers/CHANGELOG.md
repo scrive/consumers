@@ -1,3 +1,6 @@
+# consumers-2.3.3.1 (2025-??-??)
+* Do not prepare query that updates jobs in the monitor thread.
+
 # consumers-2.3.3.0 (2025-03-03)
 * Add `ccJobLogData` to `ConsumerConfig` to improve logging.
 
