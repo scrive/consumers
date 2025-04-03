@@ -277,7 +277,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
           results <- forM stuckJobs $ \job -> do
             action <- lift $ ccOnException (toException ThreadKilled) job
             pure (ccJobIndex job, Failed action)
-          runPreparedSQL_ (preparedSqlName "updateJobs" ccJobsTable) $ updateJobsQuery ccJobsTable results now
+          runSQL_ $ updateJobsQuery ccJobsTable results now
         runPreparedSQL_ (preparedSqlName "removeInactive" ccConsumersTable) $
           smconcat
             [ "DELETE FROM" <+> raw ccConsumersTable
@@ -424,6 +424,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 ----------------------------------------
 
 -- | Generate a single SQL query for updating all given jobs.
+--
+-- /Note:/ this query can't be run as prepared because it has a variable number
+-- of query parameters (see retryToSQL helper).
 updateJobsQuery
   :: (Show idx, ToSQL idx)
   => RawSQL ()
