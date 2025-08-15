@@ -5,6 +5,9 @@ module Database.PostgreSQL.Consumers.Utils
   , forkP
   , gforkP
   , preparedSqlName
+  , TriggerNotification (triggerNotification)
+  , ListenNotification (listenNotification)
+  , mkNotification
   ) where
 
 import Control.Concurrent.Lifted
@@ -86,3 +89,17 @@ forkImpl ffork tname m = E.mask $ \release -> do
 
 preparedSqlName :: T.Text -> RawSQL () -> QueryName
 preparedSqlName baseName tableName = QueryName . T.take 63 $ baseName <> "$" <> unRawSQL tableName
+
+----------------------------------------
+
+newtype TriggerNotification m = TriggerNotification {triggerNotification :: m ()}
+
+newtype ListenNotification m = ListenNotification {listenNotification :: m ()}
+
+mkNotification :: MonadBaseControl IO m => m (TriggerNotification m, ListenNotification m)
+mkNotification = do
+  notificationRef <- newEmptyMVar
+  pure
+    ( TriggerNotification $ tryPutMVar notificationRef () >> pure ()
+    , ListenNotification $ takeMVar notificationRef
+    )
