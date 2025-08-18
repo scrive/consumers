@@ -1,5 +1,6 @@
 module Main where
 
+import Control.Applicative ((<|>))
 import Control.Concurrent.STM
 import Control.Exception
 import Control.Monad
@@ -54,19 +55,43 @@ runTestEnv connSource logger =
 main :: IO ()
 main = void . T.runTestTT $ T.TestCase test
 
+getConnectionString :: IO T.Text
+getConnectionString = do
+  connectionParamsString <- (<|>) <$> paramsFromGithub <*> paramsFromEnvironmentVariables
+  allArgs <- getArgs
+  case connectionParamsString of
+    Just params -> pure (stringFromParams params)
+    _ -> case allArgs of
+      connString : _args -> pure (T.pack connString)
+      [] -> printUsage *> exitFailure
+  where
+    printUsage = do
+      prog <- getProgName
+      putStrLn $ "Usage: " <> prog <> " <connection info string>"
+
+    paramsFromGithub =
+      lookupEnv "GITHUB_ACTIONS" >>= \case
+        Just "true" -> pure $ Just ("postgres", "postgres", "postgres")
+        _ -> pure $ Nothing
+    paramsFromEnvironmentVariables = do
+      variables <-
+        sequence
+          [ lookupEnv "PGHOST"
+          , lookupEnv "PGUSER"
+          , lookupEnv "PGDATABASE"
+          ]
+      case variables of
+        [Just host, Just user, Just database] -> pure $ Just (host, user, database)
+        _ -> pure $ Nothing
+    stringFromParams (host, user, database) =
+      (T.pack ("host=" <> host <> " user=" <> user <> " dbname=" <> database))
+
 test :: IO ()
 test = do
-  connString <-
-    getArgs >>= \case
-      connString : _args -> pure $ T.pack connString
-      [] ->
-        lookupEnv "GITHUB_ACTIONS" >>= \case
-          Just "true" -> pure "host=postgres user=postgres password=postgres"
-          _ -> printUsage >> exitFailure
-
+  connectionParamsString <- getConnectionString
   let connSettings =
         defaultConnectionSettings
-          { csConnInfo = connString
+          { csConnInfo = connectionParamsString
           }
       ConnectionSource connSource = simpleSource connSettings
 
@@ -109,10 +134,6 @@ test = do
       takeTMVar tmvar >>= \case
         True -> pure ()
         False -> retry
-
-    printUsage = do
-      prog <- getProgName
-      putStrLn $ "Usage: " <> prog <> " <connection info string>"
 
     definitions = emptyDbDefinitions {dbTables = [consumersTable, jobsTable]}
     -- NB: order of migrations is important.
