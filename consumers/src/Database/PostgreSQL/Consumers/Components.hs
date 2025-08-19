@@ -24,7 +24,7 @@ import Data.Function
 import Data.Int
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, isJust)
 import Data.Monoid.Utils
 import Data.Text qualified as T
 import Database.PostgreSQL.Consumers.Config
@@ -50,6 +50,7 @@ runConsumer
      , FromSQL idx
      , ToSQL idx
      , Ord idx
+     , MonadIO m
      )
   => ConsumerConfig m idx job
   -- ^ The consumer.
@@ -67,6 +68,7 @@ runConsumerWithIdleSignal
      , FromSQL idx
      , ToSQL idx
      , Ord idx
+     , MonadIO m
      )
   => ConsumerConfig m idx job
   -- ^ The consumer.
@@ -87,6 +89,7 @@ runConsumerWithMaybeIdleSignal
      , FromSQL idx
      , ToSQL idx
      , Ord idx
+     , MonadIO m
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -313,6 +316,7 @@ spawnDispatcher
      , ToSQL idx
      , Ord idx
      , FromSQL idx
+     , MonadIO m
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -322,7 +326,7 @@ spawnDispatcher
   -> TVar Int
   -> Maybe (TMVar Bool)
   -> m ThreadId
-spawnDispatcher config@ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal =
+spawnDispatcher config@ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal = do
   forkP "dispatcher" . forever $ do
     listenNotification inbox
     someJobWasProcessed <- loop 1
@@ -339,36 +343,50 @@ spawnDispatcher config@ConsumerConfig {..} cs cid inbox runningJobsInfo runningJ
 
     loop :: Int -> m Bool
     loop limit = do
-      candidateJobs config cs limit $ \candidates -> do
-        (batch, batchSize) <- reserveJobs config cs cid candidates
-        when (batchSize > 0) $ do
-          logInfo "Processing batch" $
-            object
-              [ "batch_size" .= batchSize
-              ]
-          -- Update runningJobs before forking so that we can adjust
-          -- maxBatchSize appropriately later. We also need to mask asynchronous
-          -- exceptions here as we rely on correct value of runningJobs to
-          -- perform graceful termination.
-          mask $ \restore -> do
-            atomically $ modifyTVar' runningJobs (+ batchSize)
-            let subtractJobs = atomically $ do
-                  modifyTVar' runningJobs (subtract batchSize)
-            void
-              . forkP "batch processor"
-              . (`finally` subtractJobs)
-              . restore
-              $ do
-                mapM startJob batch >>= mapM joinJob >>= updateJobs
+      -- We process jobs based on reservation. While reserving jobs, we ensure
+      -- that we lock the relevant rows, so no 2 consumers access the same rows
+      -- concurrently. See PG's `FOR UPDATE SKIP LOCKED`.
+      --
+      -- There's a batch processing mechanism that makes it so we progressively
+      -- process more and more jobs concurrently, if we were able to saturate
+      -- job batches.
+      (batch, batchSize) <- candidateJobs config cs limit $ \candidates -> do
+        reserveJobs config cs cid candidates
 
-          when (batchSize == limit) $ do
-            maxBatchSize <- atomically $ do
-              jobs <- readTVar runningJobs
-              when (jobs >= ccMaxRunningJobs) retry
-              pure $ ccMaxRunningJobs - jobs
-            void . loop $ min maxBatchSize (2 * limit)
+      when (batchSize > 0) $ do
+        logInfo "Processing batch" $
+          object
+            [ "batch_size" .= batchSize
+            , "limit" .= limit
+            ]
 
-        pure (batchSize > 0)
+        -- Update runningJobs before forking so that we can adjust
+        -- maxBatchSize appropriately later. We also need to mask asynchronous
+        -- exceptions here as we rely on correct value of runningJobs to
+        -- perform graceful termination.
+        mask $ \restore -> do
+          atomically $ modifyTVar' runningJobs (+ batchSize)
+          let subtractJobs = atomically $ do
+                modifyTVar' runningJobs (subtract batchSize)
+          void
+            . forkP "batch processor"
+            . (`finally` subtractJobs)
+            . restore
+            $ do
+              mapM startJob batch >>= mapM joinJob >>= updateJobs
+
+        -- TODO: In the presence of mutexes, we can't differentiate between
+        -- there not being enough jobs, or that all jobs in the batch were
+        -- filtered out. So we assume that we we were able to saturate, and
+        -- potentially do an additional redundant iteration.
+        when (batchSize == limit || batchSize > 0 && isJust ccMutexColumn) $ do
+          maxBatchSize <- atomically $ do
+            jobs <- readTVar runningJobs
+            when (jobs >= ccMaxRunningJobs) retry
+            pure $ ccMaxRunningJobs - jobs
+          void . loop $ min maxBatchSize (2 * limit)
+
+      pure (batchSize > 0)
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
@@ -406,7 +424,7 @@ spawnDispatcher config@ConsumerConfig {..} cs cid inbox runningJobsInfo runningJ
 -- continuation.
 candidateJobs
   :: forall m idx job r
-   . (MonadThrow m, MonadMask m, MonadBase IO m, MonadTime m, FromSQL idx)
+   . (MonadThrow m, MonadMask m, MonadBase IO m, MonadTime m, FromSQL idx, Show idx, MonadIO m)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> Int
@@ -454,25 +472,46 @@ candidateJobs config@ConsumerConfig {..} cs limit action = do
 
 candidateJobsQuery :: ConsumerConfig m idx job -> Int -> UTCTime -> SQL
 candidateJobsQuery ConsumerConfig {..} limit now =
-  smconcat
-    [ "SELECT"
-    , mintercalate "," candidatesContents
-    , "FROM" <+> raw ccJobsTable
-    , "WHERE"
-    , "       reserved_by IS NULL"
-    , "       AND run_at IS NOT NULL"
-    , "       AND run_at <= " <?> now
-    , "       ORDER BY run_at"
-    , "LIMIT" <?> limit
-    , "FOR UPDATE SKIP LOCKED"
-    ]
-  where
-    candidatesContents = case ccMutexColumn of
-      Nothing -> ["id"]
-      Just col ->
-        [ "id"
-        , raw col
-        -- , "CASE WHEN " <+> raw col <+> " IS NOT NULL THEN pg_advisory_lock(" <+> raw col <+> ") END"
+  case ccMutexColumn of
+    Nothing ->
+      smconcat
+        [ "SELECT"
+        , "    id"
+        , "FROM" <+> raw ccJobsTable
+        , "WHERE"
+        , "    reserved_by IS NULL"
+        , "    AND run_at IS NOT NULL"
+        , "    AND run_at <=" <?> now
+        , "ORDER BY run_at"
+        , "LIMIT" <?> limit
+        , "FOR UPDATE SKIP LOCKED"
+        ]
+    Just mutexColumn ->
+      smconcat
+        [ "WITH taken_mutexes AS ("
+        , "    SELECT" <+> raw mutexColumn
+        , "      AS taken"
+        , "    FROM" <+> raw ccJobsTable
+        , "    WHERE"
+        , "        reserved_by IS NOT NULL"
+        , "        AND run_at IS NOT NULL"
+        , "        AND run_at <=" <?> now
+        , "        AND" <+> raw mutexColumn <+> "IS NOT NULL"
+        , "    GROUP BY" <+> raw mutexColumn
+        , ")"
+        , "SELECT"
+        , "    id,"
+        , "    " <+> raw mutexColumn
+        , "FROM" <+> raw ccJobsTable
+        , "LEFT JOIN taken_mutexes on taken=" <+> raw mutexColumn
+        , "WHERE"
+        , "    reserved_by IS NULL"
+        , "    AND run_at IS NOT NULL"
+        , "    AND run_at <=" <?> now
+        , "    AND taken IS NULL"
+        , "ORDER BY run_at"
+        , "LIMIT" <?> limit
+        , "FOR UPDATE SKIP LOCKED"
         ]
 
 reserveJobs
