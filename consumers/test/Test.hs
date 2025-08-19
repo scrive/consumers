@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Catch
@@ -32,17 +33,192 @@ allTests connectionSource =
   testGroup
     "consumers"
     [ testCase "can grow the number of jobs ran concurrently" (testJobScheduleGrowth connectionSource)
+    , testGroup
+        "mutexes"
+        [ testCase "force sequential execution" (testMutexesSequential connectionSource)
+        , testCase "does not block non-mutexed jobs" (testMutexesConcurrentNonMutexed connectionSource)
+        ]
     ]
 
 --------------------
 
+-- | It is possible to require a mutex on executing any job. When multiple of a
+-- job all require the same mutex, only 1 will actually be scheduled at any given
+-- point in time.
+--
+-- We test this by inserting a large number of jobs, each individually waiting a
+-- small amount of time. If this is consumed sequentially, there should be some
+-- number of jobs that haven't finished yet.
+testMutexesSequential :: ConnectionSettings -> IO ()
+testMutexesSequential connectionSettings = do
+  let ConnectionSource connSource = simpleSource connectionSettings
+  withStdOutLogger $ \logger -> do
+    let additionalColumns =
+          [ tblColumn
+              { colName = "mutex"
+              , colType = TextT
+              , colNullable = True
+              }
           ]
-      case variables of
-        [Just host, Just user, Just database] -> pure $ Just (host, user, database)
-        _ -> pure $ Nothing
-    stringFromParams (host, user, database) =
-      (T.pack ("host=" <> host <> " user=" <> user <> " dbname=" <> database))
+    runTestEnv connSource logger (TestSetup "test_mutexes_sequential" additionalColumns) $ do
+      TestEnvSt {..} <- get
+      concurrentAccess <- liftIO $ newIORef (0 :: Int, 0 :: Int)
+      let processJob _idx = liftIO $ do
+            atomicModifyIORef' concurrentAccess $ \(ca, maxCA) -> ((ca + 1, max (ca + 1) maxCA), ())
+            threadDelay 10
+            atomicModifyIORef' concurrentAccess $ \(ca, maxCA) -> ((ca - 1, maxCA), ())
+            pure (Ok Remove)
 
+      defaultConfig <- (defaultConsumerConfig @_ @_ @Int64 processJob ["id"] runIdentity)
+      let consumerConfig = defaultConfig {ccMutexColumn = Just "mutex"}
+
+      idleSignal <- liftIO newEmptyTMVarIO
+      let numberOfJobs = 64
+      putJobs numberOfJobs >> commit
+
+      numberOfJobsStart <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      -- Move time forward 2hours, because jobs are scheduled 1 hour into future
+      modifyTestTime $ addUTCTime (2 * 60 * 60)
+      finalize
+        ( localDomain "process" $
+            runConsumerWithIdleSignal consumerConfig connSource idleSignal
+        )
+        $ waitUntilTrue idleSignal
+
+      numberOfJobsEnd <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      (_, maxConcurrentAccess) <- liftIO $ readIORef concurrentAccess
+
+      liftIO $ assertEqual "Should have queued up jobs" numberOfJobsStart (numberOfJobs :: Int64)
+      liftIO $ assertEqual "Should have processed all jobs" numberOfJobsEnd (0 :: Int64)
+      liftIO $ assertEqual "Should have processed jobs sequentially" maxConcurrentAccess 1
+  where
+    putJobs nrOfRows = localDomain "put" $ do
+      TestEnvSt {..} <- get
+      now <- currentTime
+      replicateM_ (fromIntegral nrOfRows) $ do
+        runSQL_ $
+          "INSERT INTO "
+            <> raw teJobTableName
+            <> "(run_at, finished_at, reserved_by, attempts, mutex) "
+            <> "VALUES (" <?> now
+            <> " + interval '1 hour', NULL, NULL, 0, 'mut'"
+            <> ")"
+      notify teNotificationChannel ""
+
+-- | Ensure that other consumers can progress, even if there are wanted mutexes
+-- in the set of to be scheduled jobs that are currently held by others.
+--
+-- Spawn 2 consumers, one that'll get a job with a mutex in one of it's latter
+-- batches, that'll continuously block. We subsequently spawn another consumer
+-- that can proceed with the other jobs.
+testMutexesConcurrentNonMutexed :: ConnectionSettings -> IO ()
+testMutexesConcurrentNonMutexed connectionSettings = do
+  let ConnectionSource connSource = simpleSource connectionSettings
+  withStdOutLogger $ \logger -> do
+    let additionalColumns =
+          [ tblColumn
+              { colName = "mutex"
+              , colType = TextT
+              , colNullable = True
+              }
+          , tblColumn
+              { colName = "signal"
+              , colType = BoolT
+              , colNullable = False
+              }
+          ]
+    runTestEnv connSource logger (TestSetup "test_mutexes_concurrent" additionalColumns) $ do
+      now <- currentTime
+      TestEnvSt {..} <- get
+      blockConsumer <- liftIO $ newEmptyMVar
+      waitOnConsumer <- liftIO $ newEmptyMVar
+      let putJobs :: Int -> Int64 -> Maybe T.Text -> Bool -> TestEnv ()
+          putJobs timeOffsetHr nrOfRows mutex signal = localDomain "put" $ do
+            replicateM_ (fromIntegral nrOfRows) $ do
+              runSQL_ $
+                "INSERT INTO "
+                  <> raw teJobTableName
+                  <> "(run_at, finished_at, reserved_by, attempts, mutex, signal) "
+                  <> "VALUES (" <?> now
+                  <> " + interval '" <?> timeOffsetHr
+                  <> " hour', NULL, NULL, 0, " <?> mutex
+                  <> ", " <?> signal
+                  <> ")"
+            notify teNotificationChannel ""
+
+          processJob (_idx, sig) =
+            if sig
+              then liftIO $ do
+                void $ putMVar waitOnConsumer ()
+                void $ takeMVar blockConsumer
+                pure (Ok Remove)
+              else pure (Ok Remove)
+
+      defaultConfig <- (defaultConsumerConfig @_ @_ @Int64 processJob ["id", "signal"] fst)
+      let consumerConfig = defaultConfig {ccMutexColumn = Just "mutex"}
+
+      idleSignalBlocked <- liftIO newEmptyTMVarIO
+      idleSignalContinuing <- liftIO newEmptyTMVarIO
+
+      -- We insert 1 + 2 + 3 non-blocking jobs and 1 blocking job.
+      putJobs 0 3 Nothing False
+        -- Ensure the following are ordered after the above
+        >> putJobs 1 3 Nothing False
+        >> putJobs 1 1 (Just "mut") True
+        >> commit
+
+      numberOfJobsStart <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      -- Move time forward, so we're sure all consumers, when spawned want to
+      -- consume all jobs currently in the queue
+      shiftTestTimeHours 5
+
+      -- This consumer will get:
+      -- [ 1 non-blocking, 2 non-blocking, 2 non-blocking + 1 blocking with mutex ]
+      numberBeforeUnblock <- finalize (localDomain "consumer1" $ runConsumerWithIdleSignal consumerConfig connSource idleSignalBlocked) $ do
+        liftIO $ takeMVar waitOnConsumer
+
+        putJobs 2 3 Nothing False
+          >> putJobs 3 2 (Just "mut") False
+          >> putJobs 3 2 Nothing False
+          >> commit
+
+        -- This consumer will get
+        -- [ 1 non-blocking, 2 non-blocking, 2 non-blocking with mutex + 2 non-blocking ]
+        -- Because consumer 1 already has the mutex, this consumer will skip over the 2
+        -- mutex containing jobs in the 3rd batch
+        finalize (localDomain "consumer2" $ runConsumerWithIdleSignal consumerConfig connSource idleSignalContinuing) $ do
+          notify teNotificationChannel ""
+          waitUntilTrue idleSignalContinuing
+
+        numberBeforeUnblock <- do
+          runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+          fetchOne runIdentity
+
+        void $ liftIO $ putMVar blockConsumer ()
+        waitUntilTrue idleSignalBlocked
+        pure numberBeforeUnblock
+
+      numberOfJobsEnd <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      liftIO $ assertEqual "Should have queued up jobs" numberOfJobsStart (7 :: Int64)
+      -- The 6 comes from the 4 blocking mutex and nonblocking jobs in consumer 1
+      --  + 2 nonblocking jobs that wanted a mutex in consumer 2
+      liftIO $ assertEqual "Should have processed non-mutexed jobs" numberBeforeUnblock (6 :: Int64)
+      liftIO $ assertEqual "Should have processed all jobs" numberOfJobsEnd (0 :: Int64)
+
+-- | Test that when a batch is submitted, it is consumed completely and in an
+-- accelerated fashion that grows the batch size exponentially.
 testJobScheduleGrowth :: ConnectionSettings -> IO ()
 testJobScheduleGrowth connectionSettings = do
   let ConnectionSource connSource = simpleSource connectionSettings
@@ -89,24 +265,7 @@ testJobScheduleGrowth connectionSettings = do
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
   where
     getConsumerConfig :: TestEnv (ConsumerConfig TestEnv Int64 (Int64, Int32))
-    getConsumerConfig = do
-      TestEnvSt {..} <- get
-      pure $
-        ConsumerConfig
-          { ccJobsTable = teJobTableName
-          , ccConsumersTable = teConsumerTableName
-          , ccJobSelectors = ["id", "countdown"]
-          , ccJobFetcher = id
-          , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
-          , ccNotificationChannel = Just teNotificationChannel
-          , -- select some small timeout
-            ccNotificationTimeout = 100 * 1000 -- 100 msec
-          , ccMaxRunningJobs = 20
-          , ccProcessJob = processJob
-          , ccOnException = handleException
-          , ccJobLogData = \(i, _) -> ["job_id" .= i]
-          , ccMutexColumn = Nothing
-          }
+    getConsumerConfig = defaultConsumerConfig processJob ["id", "countdown"] fst
 
     putJob :: Int32 -> TestEnv ()
     putJob countdown = localDomain "put" $ do
@@ -130,10 +289,35 @@ testJobScheduleGrowth connectionSettings = do
       pure (Ok Remove)
 
 waitUntilTrue :: MonadIO m => TMVar Bool -> m ()
-waitUntilTrue tmvar = liftIO . atomically $ do
-  takeTMVar tmvar >>= \case
-    True -> pure ()
-    False -> retry
+waitUntilTrue tmvar = do
+  -- Reset the idle signal, before waiting
+  liftIO . atomically $ do
+    _ <- tryTakeTMVar tmvar
+    putTMVar tmvar False
+  liftIO . atomically $ do
+    takeTMVar tmvar >>= \case
+      True -> pure ()
+      False -> retry
 
-handleException :: SomeException -> k -> TestEnv Action
+handleException :: Applicative m => SomeException -> k -> m Action
 handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+
+defaultConsumerConfig :: (FromRow job, Applicative m) => (job -> m Result) -> [SQL] -> (job -> idx) -> TestEnv (ConsumerConfig m idx job)
+defaultConsumerConfig processJob jobSelectors jobIndex = do
+  TestEnvSt {..} <- get
+  pure $
+    ConsumerConfig
+      { ccJobsTable = teJobTableName
+      , ccConsumersTable = teConsumerTableName
+      , ccJobSelectors = jobSelectors
+      , ccJobFetcher = id
+      , ccJobIndex = jobIndex
+      , ccNotificationChannel = Just teNotificationChannel
+      , -- select some small timeout
+        ccNotificationTimeout = 100 * 1000 -- 100 msec
+      , ccMaxRunningJobs = 20
+      , ccProcessJob = processJob
+      , ccOnException = handleException
+      , ccJobLogData = \_ -> []
+      , ccMutexColumn = Nothing
+      }

@@ -80,6 +80,9 @@ data TestSetup = TestSetup
 modifyTestTime :: MonadState TestEnvSt m => (UTCTime -> UTCTime) -> m ()
 modifyTestTime modtime = modify (\te -> te {teCurrentTime = modtime . teCurrentTime $ te})
 
+shiftTestTimeHours :: MonadState TestEnvSt m => NominalDiffTime -> m ()
+shiftTestTimeHours hr = modifyTestTime $ addUTCTime (hr * 60 * 60)
+
 runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestSetup -> TestEnv a -> IO a
 runTestEnv connSource logger TestSetup {..} test = do
   runLogT "consumers-test" logger defaultLogLevel $

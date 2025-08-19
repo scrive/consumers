@@ -131,6 +131,7 @@ runInstrumentedConsumer
   :: forall m idx job
    . ( Eq idx
      , Show idx
+     , Ord idx
      , FromSQL idx
      , ToSQL idx
      , MonadBaseControl IO m
