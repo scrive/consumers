@@ -82,6 +82,14 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
+  , ccMutexColumn :: !(Maybe (RawSQL ()))
+  -- ^ Optional column on the 'ccJobsTable' table.
+  --
+  -- * __mutex__ - represents the mutex that should be held while processing
+  --  a job.  The idea is that given jobs \[J_1, ... J_n\] all with the same value
+  --  within this column, we maximally run 1 of them on /any/ consumer. The
+  -- current implementation  implies that at maximum occupancy, the maximum
+  -- deviation from 'ccMaxRunningJobs' is at most /n/.
   , ccNotificationChannel :: !(Maybe Channel)
   -- ^ Notification channel used for listening for incoming jobs.  Whenever the
   -- consumer receives a notification, it checks the database for any pending

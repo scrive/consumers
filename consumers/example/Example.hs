@@ -110,6 +110,7 @@ main = do
         , ccProcessJob = processJob
         , ccOnException = handleException
         , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccMutexColumn = Nothing
         }
 
     -- Add a job to the consumer's queue.
