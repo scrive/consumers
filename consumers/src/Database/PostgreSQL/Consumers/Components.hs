@@ -18,11 +18,15 @@ import Control.Monad.Catch
 import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
+import Data.Containers.ListUtils (nubOrd)
 import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
+import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as M
+import Data.Maybe (catMaybes)
 import Data.Monoid.Utils
+import Data.Text qualified as T
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
 import Database.PostgreSQL.Consumers.Utils
@@ -45,6 +49,7 @@ runConsumer
      , Show idx
      , FromSQL idx
      , ToSQL idx
+     , Ord idx
      )
   => ConsumerConfig m idx job
   -- ^ The consumer.
@@ -61,6 +66,7 @@ runConsumerWithIdleSignal
      , Show idx
      , FromSQL idx
      , ToSQL idx
+     , Ord idx
      )
   => ConsumerConfig m idx job
   -- ^ The consumer.
@@ -80,6 +86,7 @@ runConsumerWithMaybeIdleSignal
      , Show idx
      , FromSQL idx
      , ToSQL idx
+     , Ord idx
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -304,6 +311,8 @@ spawnDispatcher
      , MonadTime m
      , Show idx
      , ToSQL idx
+     , Ord idx
+     , FromSQL idx
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -313,7 +322,7 @@ spawnDispatcher
   -> TVar Int
   -> Maybe (TMVar Bool)
   -> m ThreadId
-spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal =
+spawnDispatcher config@ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
     listenNotification inbox
     someJobWasProcessed <- loop 1
@@ -330,66 +339,36 @@ spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mId
 
     loop :: Int -> m Bool
     loop limit = do
-      (batch, batchSize) <- reserveJobs limit
-      when (batchSize > 0) $ do
-        logInfo "Processing batch" $
-          object
-            [ "batch_size" .= batchSize
-            ]
-        -- Update runningJobs before forking so that we can adjust
-        -- maxBatchSize appropriately later. We also need to mask asynchronous
-        -- exceptions here as we rely on correct value of runningJobs to
-        -- perform graceful termination.
-        mask $ \restore -> do
-          atomically $ modifyTVar' runningJobs (+ batchSize)
-          let subtractJobs = atomically $ do
-                modifyTVar' runningJobs (subtract batchSize)
-          void
-            . forkP "batch processor"
-            . (`finally` subtractJobs)
-            . restore
-            $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+      candidateJobs config cs limit $ \candidates -> do
+        (batch, batchSize) <- reserveJobs config cs cid candidates
+        when (batchSize > 0) $ do
+          logInfo "Processing batch" $
+            object
+              [ "batch_size" .= batchSize
+              ]
+          -- Update runningJobs before forking so that we can adjust
+          -- maxBatchSize appropriately later. We also need to mask asynchronous
+          -- exceptions here as we rely on correct value of runningJobs to
+          -- perform graceful termination.
+          mask $ \restore -> do
+            atomically $ modifyTVar' runningJobs (+ batchSize)
+            let subtractJobs = atomically $ do
+                  modifyTVar' runningJobs (subtract batchSize)
+            void
+              . forkP "batch processor"
+              . (`finally` subtractJobs)
+              . restore
+              $ do
+                mapM startJob batch >>= mapM joinJob >>= updateJobs
 
-        when (batchSize == limit) $ do
-          maxBatchSize <- atomically $ do
-            jobs <- readTVar runningJobs
-            when (jobs >= ccMaxRunningJobs) retry
-            pure $ ccMaxRunningJobs - jobs
-          void . loop $ min maxBatchSize (2 * limit)
+          when (batchSize == limit) $ do
+            maxBatchSize <- atomically $ do
+              jobs <- readTVar runningJobs
+              when (jobs >= ccMaxRunningJobs) retry
+              pure $ ccMaxRunningJobs - jobs
+            void . loop $ min maxBatchSize (2 * limit)
 
-      pure (batchSize > 0)
-
-    reserveJobs :: Int -> m ([job], Int)
-    reserveJobs limit = runDBT cs ts $ do
-      now <- currentTime
-      n <-
-        runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-          smconcat
-            [ "UPDATE" <+> raw ccJobsTable <+> "SET"
-            , "  reserved_by =" <?> cid
-            , ", attempts = CASE"
-            , "    WHEN finished_at IS NULL THEN attempts + 1"
-            , "    ELSE 1"
-            , "  END"
-            , "WHERE id IN (" <> reservedJobs now <> ")"
-            , "RETURNING" <+> mintercalate ", " ccJobSelectors
-            ]
-      -- Decode lazily as we want the transaction to be as short as possible.
-      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
-      where
-        reservedJobs :: UTCTime -> SQL
-        reservedJobs now =
-          smconcat
-            [ "SELECT id FROM" <+> raw ccJobsTable
-            , "WHERE"
-            , "       reserved_by IS NULL"
-            , "       AND run_at IS NOT NULL"
-            , "       AND run_at <= " <?> now
-            , "       ORDER BY run_at"
-            , "LIMIT" <?> limit
-            , "FOR UPDATE SKIP LOCKED"
-            ]
+        pure (batchSize > 0)
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
@@ -421,6 +400,108 @@ spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mId
       runSQL_ $ updateJobsQuery ccJobsTable results now
 
 ----------------------------------------
+
+-- | Select (and lock using advisory locks, if relevant) the rows we intend
+-- reserving. Ensures that the locks are only held for the duration of the
+-- continuation.
+candidateJobs
+  :: forall m idx job r
+   . (MonadThrow m, MonadMask m, MonadBase IO m, MonadTime m, FromSQL idx)
+  => ConsumerConfig m idx job
+  -> ConnectionSourceM m
+  -> Int
+  -> ([idx] -> m r)
+  -> m r
+candidateJobs config@ConsumerConfig {..} cs limit action = do
+  -- There's two variants of this query, where we do or do not use the mutex
+  -- column.
+  now <- currentTime
+  let preparedName = case ccMutexColumn of
+        Just c -> unRawSQL ("candidateJobs" <> c)
+        Nothing -> "candidateJobs"
+
+      hashMutexes mutexes = "hashtext(UNNEST(" <?> Array1 mutexes <+> "))"
+      unlockAdvisory :: [Maybe T.Text] -> m ()
+      unlockAdvisory mutexIds = runDBT cs ts $ do
+        let relevantMutexes = nubOrd $ catMaybes mutexIds
+        void $ runSQL $ "SELECT pg_advisory_unlock(" <> hashMutexes relevantMutexes <> ")"
+      lockAdvisory :: [Maybe T.Text] -> DBT m ()
+      lockAdvisory mutexIds = do
+        let relevantMutexes = nubOrd $ catMaybes mutexIds
+        void $ runSQL $ "SELECT pg_advisory_lock(" <> hashMutexes relevantMutexes <> ")"
+      getCandidates :: FromRow t => DBT m [t]
+      getCandidates = do
+        void $ runPreparedSQL (preparedSqlName preparedName ccJobsTable) $ candidateJobsQuery config limit now
+        F.toList <$> queryResult
+
+  case ccMutexColumn of
+    Just _ -> do
+      let initialize = runDBT cs ts $ do
+            result <- getCandidates
+            -- In the batch of results, we may have multiple jobs that all want
+            -- the same mutex. Ensure we only get one job per mutex-group.
+            let firstOfGroup group = case NE.head group of
+                  (_, Nothing) -> NE.toList group
+                  mutexCandidate -> [mutexCandidate]
+                groups = concatMap firstOfGroup $ NE.groupWith snd result
+                res@(_, mutexes) = unzip groups
+            lockAdvisory mutexes
+            pure res
+      bracket initialize (unlockAdvisory . snd) (action . fst)
+    Nothing -> do
+      candidates <- fmap (fmap runIdentity) $ runDBT cs ts getCandidates
+      action candidates
+
+candidateJobsQuery :: ConsumerConfig m idx job -> Int -> UTCTime -> SQL
+candidateJobsQuery ConsumerConfig {..} limit now =
+  smconcat
+    [ "SELECT"
+    , mintercalate "," candidatesContents
+    , "FROM" <+> raw ccJobsTable
+    , "WHERE"
+    , "       reserved_by IS NULL"
+    , "       AND run_at IS NOT NULL"
+    , "       AND run_at <= " <?> now
+    , "       ORDER BY run_at"
+    , "LIMIT" <?> limit
+    , "FOR UPDATE SKIP LOCKED"
+    ]
+  where
+    candidatesContents = case ccMutexColumn of
+      Nothing -> ["id"]
+      Just col ->
+        [ "id"
+        , raw col
+        -- , "CASE WHEN " <+> raw col <+> " IS NOT NULL THEN pg_advisory_lock(" <+> raw col <+> ") END"
+        ]
+
+reserveJobs
+  :: (MonadBaseControl IO m, MonadMask m, Show idx, ToSQL idx)
+  => ConsumerConfig m idx job
+  -> ConnectionSourceM m
+  -> ConsumerID
+  -> [idx]
+  -> m ([job], Int)
+reserveJobs config@ConsumerConfig {..} cs consumerId candidates =
+  runDBT cs ts $ do
+    n <-
+      runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
+        reserveJobsQuery config consumerId candidates
+    -- Decode lazily as we want the transaction to be as short as possible.
+    (,n) . F.toList . fmap ccJobFetcher <$> queryResult
+
+reserveJobsQuery :: (Show idx, ToSQL idx) => ConsumerConfig m idx job -> ConsumerID -> [idx] -> SQL
+reserveJobsQuery ConsumerConfig {..} consumerId candidates =
+  smconcat
+    [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+    , "  reserved_by =" <?> consumerId
+    , ", attempts = CASE"
+    , "    WHEN finished_at IS NULL THEN attempts + 1"
+    , "    ELSE 1"
+    , "  END"
+    , "WHERE id = ANY(" <?> Array1 candidates <+> ")"
+    , "RETURNING" <+> mintercalate ", " ccJobSelectors
+    ]
 
 -- | Generate a single SQL query for updating all given jobs.
 --
