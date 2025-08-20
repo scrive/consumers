@@ -38,6 +38,10 @@ allTests connectionSource =
         [ testCase "force sequential execution" (testMutexesSequential connectionSource)
         , testCase "does not block non-mutexed jobs" (testMutexesConcurrentNonMutexed connectionSource)
         ]
+    , testGroup
+        "expirations"
+        [ testCase "delete expired jobs" (testExpired connectionSource)
+        ]
     ]
 
 --------------------
@@ -69,7 +73,7 @@ testMutexesSequential connectionSettings = do
             atomicModifyIORef' concurrentAccess $ \(ca, maxCA) -> ((ca - 1, maxCA), ())
             pure (Ok Remove)
 
-      defaultConfig <- (defaultConsumerConfig @_ @_ @Int64 processJob ["id"] runIdentity)
+      defaultConfig <- defaultConsumerConfig @_ @_ @Int64 processJob ["id"] runIdentity
       let consumerConfig = defaultConfig {ccMutexColumn = Just "mutex"}
 
       idleSignal <- liftIO newEmptyTMVarIO
@@ -136,8 +140,8 @@ testMutexesConcurrentNonMutexed connectionSettings = do
     runTestEnv connSource logger (TestSetup "test_mutexes_concurrent" additionalColumns) $ do
       now <- currentTime
       TestEnvSt {..} <- get
-      blockConsumer <- liftIO $ newEmptyMVar
-      waitOnConsumer <- liftIO $ newEmptyMVar
+      blockConsumer <- liftIO newEmptyMVar
+      waitOnConsumer <- liftIO newEmptyMVar
       let putJobs :: Int -> Int64 -> Maybe T.Text -> Bool -> TestEnv ()
           putJobs timeOffsetHr nrOfRows mutex signal = localDomain "put" $ do
             replicateM_ (fromIntegral nrOfRows) $ do
@@ -160,7 +164,7 @@ testMutexesConcurrentNonMutexed connectionSettings = do
                 pure (Ok Remove)
               else pure (Ok Remove)
 
-      defaultConfig <- (defaultConsumerConfig @_ @_ @Int64 processJob ["id", "signal"] fst)
+      defaultConfig <- defaultConsumerConfig @_ @_ @Int64 processJob ["id", "signal"] fst
       let consumerConfig = defaultConfig {ccMutexColumn = Just "mutex"}
 
       idleSignalBlocked <- liftIO newEmptyTMVarIO
@@ -203,7 +207,7 @@ testMutexesConcurrentNonMutexed connectionSettings = do
           runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
           fetchOne runIdentity
 
-        void $ liftIO $ putMVar blockConsumer ()
+        void . liftIO $ putMVar blockConsumer ()
         waitUntilTrue idleSignalBlocked
         pure numberBeforeUnblock
 
@@ -216,6 +220,64 @@ testMutexesConcurrentNonMutexed connectionSettings = do
       --  + 2 nonblocking jobs that wanted a mutex in consumer 2
       liftIO $ assertEqual "Should have processed non-mutexed jobs" numberBeforeUnblock (6 :: Int64)
       liftIO $ assertEqual "Should have processed all jobs" numberOfJobsEnd (0 :: Int64)
+
+-- | On execution of a job, we make it possible to cleanup any jobs that are not
+-- relevant anymore. This tests that we do indeed correctly delete the selected
+-- expired jobs.
+testExpired :: ConnectionSettings -> IO ()
+testExpired connectionSettings = do
+  let ConnectionSource connSource = simpleSource connectionSettings
+  withStdOutLogger $ \logger -> do
+    let additionalColumns =
+          [ tblColumn
+              { colName = "expire"
+              , colType = TextT
+              , colNullable = False
+              }
+          ]
+    runTestEnv connSource logger (TestSetup "test_jobs_expired" additionalColumns) $ do
+      TestEnvSt {..} <- get
+      nrExecuted <- liftIO $ newIORef (0 :: Int)
+      let processJob (Identity _) = do
+            liftIO . atomicModifyIORef' nrExecuted $ (\c -> (c + 1, ()))
+            pure $ Ok (RemoveExpired (ExpiredSelector "expire" "expire"))
+
+      consumerConfig <- defaultConsumerConfig @_ @_ @Int64 processJob ["id"] runIdentity
+      idleSignal <- liftIO newEmptyTMVarIO
+      replicateM_ 10 (putJob "expire") >> replicateM_ 10 (putJob "not_expire") >> commit
+
+      (numberOfJobsStart :: Int64) <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      -- Move time forward 2hours, because jobs are scheduled 1 hour into future
+      modifyTestTime $ addUTCTime (2 * 60 * 60)
+      finalize (localDomain "process" $ runConsumerWithIdleSignal consumerConfig connSource idleSignal) $ do
+        waitUntilTrue idleSignal
+        notify teNotificationChannel ""
+
+      (numberOfJobsEnd :: Int64) <- do
+        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+        fetchOne runIdentity
+
+      jobsExecuted <- liftIO $ readIORef nrExecuted
+
+      liftIO $ T.assertEqual "Number of jobs in table" 20 numberOfJobsStart
+      liftIO $ T.assertEqual "Number of jobs in table after execution" 0 numberOfJobsEnd
+      liftIO $ T.assertEqual "Number of jobs executed" 11 jobsExecuted
+  where
+    putJob :: T.Text -> TestEnv ()
+    putJob expired = localDomain "put" $ do
+      TestEnvSt {..} <- get
+      now <- currentTime
+      runSQL_ $
+        "INSERT INTO "
+          <> raw teJobTableName
+          <> "(run_at, finished_at, reserved_by, attempts, expire) "
+          <> "VALUES (" <?> now
+          <> " + interval '1 hour', NULL, NULL, 0, " <?> expired
+          <> ")"
+      notify teNotificationChannel ""
 
 -- | Test that when a batch is submitted, it is consumed completely and in an
 -- accelerated fashion that grows the batch size exponentially.
@@ -236,19 +298,23 @@ testJobScheduleGrowth connectionSettings = do
       idleSignal <- liftIO newEmptyTMVarIO
       putJob 10 >> commit
 
-      rowCountGrowth :: [Int64] <- forM [1 .. 10 :: Int] $ \_ -> do
-        -- Move time forward 2hours, because jobs are scheduled 1 hour into future
-        modifyTestTime $ addUTCTime (2 * 60 * 60)
-        finalize
-          ( localDomain "process" $
-              runConsumerWithIdleSignal consumerConfig connSource idleSignal
-          )
-          $ waitUntilTrue idleSignal
-        currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
+      rowCountGrowth :: [Int64] <-
+        replicateM
+          (10 :: Int)
+          ( do
+              -- Move time forward 2hours, because jobs are scheduled 1 hour into future
+              modifyTestTime $ addUTCTime (2 * 60 * 60)
+              finalize
+                ( localDomain "process" $
+                    runConsumerWithIdleSignal consumerConfig connSource idleSignal
+                )
+                $ waitUntilTrue idleSignal
+              currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
 
-        -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
-        runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
-        fetchOne runIdentity
+              -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
+              runSQL_ ("SELECT COUNT(*) from " <> raw teJobTableName)
+              fetchOne runIdentity
+          )
 
       -- Move time 2 hours forward
       modifyTestTime $ addUTCTime (2 * 60 * 60)
@@ -318,6 +384,6 @@ defaultConsumerConfig processJob jobSelectors jobIndex = do
       , ccMaxRunningJobs = 20
       , ccProcessJob = processJob
       , ccOnException = handleException
-      , ccJobLogData = \_ -> []
+      , ccJobLogData = const []
       , ccMutexColumn = Nothing
       }

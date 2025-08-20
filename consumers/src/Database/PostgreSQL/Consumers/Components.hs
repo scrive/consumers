@@ -4,7 +4,8 @@ module Database.PostgreSQL.Consumers.Components
   , spawnListener
   , spawnMonitor
   , spawnDispatcher
-  ) where
+  )
+where
 
 import Control.Concurrent.Lifted
 import Control.Concurrent.STM hiding (atomically)
@@ -442,14 +443,14 @@ candidateJobs config@ConsumerConfig {..} cs limit action = do
       unlockAdvisory :: [Maybe T.Text] -> m ()
       unlockAdvisory mutexIds = runDBT cs ts $ do
         let relevantMutexes = nubOrd $ catMaybes mutexIds
-        void $ runSQL $ "SELECT pg_advisory_unlock(" <> hashMutexes relevantMutexes <> ")"
+        void . runSQL $ ("SELECT pg_advisory_unlock(" <> hashMutexes relevantMutexes <> ")")
       lockAdvisory :: [Maybe T.Text] -> DBT m ()
       lockAdvisory mutexIds = do
         let relevantMutexes = nubOrd $ catMaybes mutexIds
-        void $ runSQL $ "SELECT pg_advisory_lock(" <> hashMutexes relevantMutexes <> ")"
+        void . runSQL $ ("SELECT pg_advisory_lock(" <> hashMutexes relevantMutexes <> ")")
       getCandidates :: FromRow t => DBT m [t]
       getCandidates = do
-        void $ runPreparedSQL (preparedSqlName preparedName ccJobsTable) $ candidateJobsQuery config limit now
+        void . runPreparedSQL (preparedSqlName preparedName ccJobsTable) $ candidateJobsQuery config limit now
         F.toList <$> queryResult
 
   case ccMutexColumn of
@@ -467,7 +468,7 @@ candidateJobs config@ConsumerConfig {..} cs limit action = do
             pure res
       bracket initialize (unlockAdvisory . snd) (action . fst)
     Nothing -> do
-      candidates <- fmap (fmap runIdentity) $ runDBT cs ts getCandidates
+      candidates <- fmap runIdentity <$> runDBT cs ts getCandidates
       action candidates
 
 candidateJobsQuery :: ConsumerConfig m idx job -> Int -> UTCTime -> SQL
@@ -503,7 +504,7 @@ candidateJobsQuery ConsumerConfig {..} limit now =
         , "    id,"
         , "    " <+> raw mutexColumn
         , "FROM" <+> raw ccJobsTable
-        , "LEFT JOIN taken_mutexes on taken=" <+> raw mutexColumn
+        , "LEFT JOIN taken_mutexes on taken=" <> raw mutexColumn
         , "WHERE"
         , "    reserved_by IS NULL"
         , "    AND run_at IS NOT NULL"
@@ -553,25 +554,38 @@ updateJobsQuery
   -> UTCTime
   -> SQL
 updateJobsQuery jobsTable results now =
-  smconcat
+  smconcat $
     [ "WITH removed AS ("
     , "  DELETE FROM" <+> raw jobsTable
-    , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
+    , "  WHERE id = ANY(" <?> Array1 deletesIndividual <+> ")"
     , ")"
-    , "UPDATE" <+> raw jobsTable <+> "SET"
-    , "  reserved_by = NULL"
-    , ", run_at = CASE"
-    , "    WHEN FALSE THEN run_at"
-    , smconcat $ M.foldrWithKey retryToSQL [] retries
-    , "    ELSE NULL" -- processed
-    , "  END"
-    , ", finished_at = CASE"
-    , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
-    , "    ELSE NULL"
-    , "  END"
-    , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
     ]
+      ++ deleteExpired
+      ++ [ "UPDATE" <+> raw jobsTable <+> "SET"
+         , "  reserved_by = NULL"
+         , ", run_at = CASE"
+         , "    WHEN FALSE THEN run_at"
+         , smconcat $ M.foldrWithKey retryToSQL [] retries
+         , "    ELSE NULL" -- processed
+         , "  END"
+         , ", finished_at = CASE"
+         , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
+         , "    ELSE NULL"
+         , "  END"
+         , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
+         ]
   where
+    deleteExpired =
+      if M.size deletesExpired > 0
+        then
+          [ ", remove_expired AS ("
+          , "  DELETE FROM" <+> raw jobsTable
+          , "  WHERE run_at <= " <?> now <+> " AND reserved_by IS NULL AND ("
+          , mintercalate " OR " (map expiredToSQL (M.toList deletesExpired))
+          , "))"
+          ]
+        else []
+    expiredToSQL (col, vals) = raw col <> "=ANY(" <?> Array1 vals <+> ")"
     retryToSQL (Left int) ids =
       ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
     retryToSQL (Right time) ids =
@@ -588,17 +602,28 @@ updateJobsQuery jobsTable results now =
           RerunAfter int -> M.insertWith (++) (Left int) [idx] iretries
           RerunAt time -> M.insertWith (++) (Right time) [idx] iretries
           Remove -> error "updateJobs: Remove should've been filtered out"
+          RemoveExpired _ -> error "updateJobs: RemoveExpired should've been filtered out"
 
     successes = foldr step [] updates
       where
         step (idx, Ok _) acc = idx : acc
         step (_, Failed _) acc = acc
 
-    (deletes, updates) = foldr step ([], []) results
+    deletesExpired = M.fromListWith (++) . concatMap (getExpired . snd) $ results
+      where
+        getExpired result =
+          case result of
+            Ok (RemoveExpired (ExpiredSelector col val)) -> [(col, [val])]
+            Failed (RemoveExpired (ExpiredSelector col val)) -> [(col, [val])]
+            _ -> []
+
+    (deletesIndividual, updates) = foldr step ([], []) results
       where
         step job@(idx, result) (ideletes, iupdates) = case result of
           Ok Remove -> (idx : ideletes, iupdates)
           Failed Remove -> (idx : ideletes, iupdates)
+          Ok (RemoveExpired _) -> (idx : ideletes, iupdates)
+          Failed (RemoveExpired _) -> (idx : ideletes, iupdates)
           _ -> (ideletes, job : iupdates)
 
 ts :: TransactionSettings

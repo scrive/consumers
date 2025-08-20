@@ -1,17 +1,15 @@
 module Database.PostgreSQL.Consumers.Config
   ( Action (..)
+  , ExpiredSelector (..)
   , Result (..)
   , ConsumerConfig (..)
   ) where
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
+import Data.Text qualified as T
 import Data.Time
-import Database.PostgreSQL.PQTypes.FromRow
-import Database.PostgreSQL.PQTypes.Interval
-import Database.PostgreSQL.PQTypes.Notification
-import Database.PostgreSQL.PQTypes.SQL
-import Database.PostgreSQL.PQTypes.SQL.Raw
+import Database.PostgreSQL.PQTypes
 
 -- | Action to take after a job was processed.
 data Action
@@ -19,6 +17,14 @@ data Action
   | RerunAfter Interval
   | RerunAt UTCTime
   | Remove
+  | -- | Remove expired jobs that have the given value in the respective column.
+    RemoveExpired ExpiredSelector
+  deriving (Eq, Ord, Show)
+
+data ExpiredSelector = ExpiredSelector
+  { expiredSelectorColumn :: RawSQL ()
+  , expiredSelectorValue :: T.Text
+  }
   deriving (Eq, Ord, Show)
 
 -- | Result of processing a job.
@@ -89,7 +95,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   --  a job.  The idea is that given jobs \[J_1, ... J_n\] all with the same value
   --  within this column, we maximally run 1 of them on /any/ consumer. The
   -- current implementation  implies that at maximum occupancy, the maximum
-  -- deviation from 'ccMaxRunningJobs' is at most /n/.
+  -- deviation from 'ccMaxRunningJobs' is at most /n/. Should be a nullable
+  -- text column
   , ccNotificationChannel :: !(Maybe Channel)
   -- ^ Notification channel used for listening for incoming jobs.  Whenever the
   -- consumer receives a notification, it checks the database for any pending
