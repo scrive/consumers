@@ -34,20 +34,21 @@ getConnectionString = do
 
     paramsFromGithub =
       lookupEnv "GITHUB_ACTIONS" >>= \case
-        Just "true" -> pure $ Just ("postgres", "postgres", "postgres")
-        _ -> pure $ Nothing
+        Just "true" -> pure $ Just ("postgres", "postgres", "postgres", "postgres")
+        _ -> pure Nothing
     paramsFromEnvironmentVariables = do
       variables <-
         sequence
           [ lookupEnv "PGHOST"
           , lookupEnv "PGUSER"
           , lookupEnv "PGDATABASE"
+          , lookupEnv "PGPASSWORD"
           ]
       case variables of
-        [Just host, Just user, Just database] -> pure $ Just (host, user, database)
-        _ -> pure $ Nothing
-    stringFromParams (host, user, database) =
-      (T.pack ("host=" <> host <> " user=" <> user <> " dbname=" <> database))
+        [Just host, Just user, Just database, Just password] -> pure $ Just (host, user, database, password)
+        _ -> pure Nothing
+    stringFromParams (host, user, database, pass) =
+      T.pack ("host=" <> host <> " user=" <> user <> " dbname=" <> database <> " password=" <> pass)
 
 data TestEnvSt = TestEnvSt
   { teCurrentTime :: UTCTime
@@ -79,6 +80,9 @@ data TestSetup = TestSetup
 
 modifyTestTime :: MonadState TestEnvSt m => (UTCTime -> UTCTime) -> m ()
 modifyTestTime modtime = modify (\te -> te {teCurrentTime = modtime . teCurrentTime $ te})
+
+shiftTestTimeHours :: MonadState TestEnvSt m => NominalDiffTime -> m ()
+shiftTestTimeHours hr = modifyTestTime $ addUTCTime (hr * 60 * 60)
 
 runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestSetup -> TestEnv a -> IO a
 runTestEnv connSource logger TestSetup {..} test = do

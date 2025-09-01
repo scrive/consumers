@@ -1,16 +1,13 @@
 module Main where
 
-import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
 import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Control.Monad.RWS
 import Control.Monad.Time
-import Data.IORef
 import Data.Int
 import Data.Text qualified as T
-import Data.Time
 import Database.PostgreSQL.Consumers
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Model
@@ -36,6 +33,8 @@ allTests connectionSource =
 
 --------------------
 
+-- | Test that when a batch is submitted, it is consumed completely and in an
+-- accelerated fashion that grows the batch size exponentially.
 testJobScheduleGrowth :: ConnectionSettings -> IO ()
 testJobScheduleGrowth connectionSettings = do
   let ConnectionSource connSource = simpleSource connectionSettings
@@ -53,9 +52,9 @@ testJobScheduleGrowth connectionSettings = do
       idleSignal <- liftIO newEmptyTMVarIO
       putJob 10 >> commit
 
-      rowCountGrowth :: [Int64] <- forM [1 .. 10 :: Int] $ \_ -> do
+      rowCountGrowth :: [Int64] <- replicateM (10 :: Int) $ do
         -- Move time forward 2hours, because jobs are scheduled 1 hour into future
-        modifyTestTime $ addUTCTime (2 * 60 * 60)
+        shiftTestTimeHours 2
         finalize
           ( localDomain "process" $
               runConsumerWithIdleSignal consumerConfig connSource idleSignal
@@ -68,7 +67,7 @@ testJobScheduleGrowth connectionSettings = do
         fetchOne runIdentity
 
       -- Move time 2 hours forward
-      modifyTestTime $ addUTCTime (2 * 60 * 60)
+      shiftTestTimeHours 2
       finalize
         ( localDomain "process" $
             runConsumerWithIdleSignal consumerConfig connSource idleSignal
@@ -82,24 +81,7 @@ testJobScheduleGrowth connectionSettings = do
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
   where
     getConsumerConfig :: TestEnv (ConsumerConfig TestEnv Int64 (Int64, Int32))
-    getConsumerConfig = do
-      TestEnvSt {..} <- get
-      pure $
-        ConsumerConfig
-          { ccJobsTable = teJobTableName
-          , ccConsumersTable = teConsumerTableName
-          , ccJobSelectors = ["id", "countdown"]
-          , ccJobFetcher = id
-          , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
-          , ccNotificationChannel = Just teNotificationChannel
-          , -- select some small timeout
-            ccNotificationTimeout = 100 * 1000 -- 100 msec
-          , ccMaxRunningJobs = 20
-          , ccProcessJob = processJob
-          , ccOnException = handleException
-          , ccJobLogData = \(i, _) -> ["job_id" .= i]
-          , ccMutexColumn = Nothing
-          }
+    getConsumerConfig = defaultConsumerConfig processJob ["id", "countdown"] fst
 
     putJob :: Int32 -> TestEnv ()
     putJob countdown = localDomain "put" $ do
@@ -128,5 +110,24 @@ waitUntilTrue tmvar = liftIO . atomically $ do
     True -> pure ()
     False -> retry
 
-handleException :: SomeException -> k -> TestEnv Action
+handleException :: Applicative m => SomeException -> k -> m Action
 handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+
+defaultConsumerConfig :: (FromRow job, Applicative m) => (job -> m Result) -> [SQL] -> (job -> idx) -> TestEnv (ConsumerConfig m idx job)
+defaultConsumerConfig processJob jobSelectors jobIndex = do
+  TestEnvSt {..} <- get
+  pure $
+    ConsumerConfig
+      { ccJobsTable = teJobTableName
+      , ccConsumersTable = teConsumerTableName
+      , ccJobSelectors = jobSelectors
+      , ccJobFetcher = id
+      , ccJobIndex = jobIndex
+      , ccNotificationChannel = Just teNotificationChannel
+      , -- select some small timeout
+        ccNotificationTimeout = 100 * 1000 -- 100 msec
+      , ccMaxRunningJobs = 20
+      , ccProcessJob = processJob
+      , ccOnException = handleException
+      , ccJobLogData = const []
+      }
