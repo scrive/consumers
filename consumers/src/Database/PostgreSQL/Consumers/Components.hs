@@ -50,6 +50,7 @@ runConsumer
   -- ^ The consumer.
   -> ConnectionSourceM m
   -> m (m ())
+{-# INLINEABLE runConsumer #-}
 runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 
 runConsumerWithIdleSignal
@@ -67,6 +68,7 @@ runConsumerWithIdleSignal
   -> ConnectionSourceM m
   -> TMVar Bool
   -> m (m ())
+{-# INLINEABLE runConsumerWithIdleSignal #-}
 runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc cs (Just idleSignal)
 
 -- | Run the consumer and also signal whenever the consumer is waiting for
@@ -85,6 +87,7 @@ runConsumerWithMaybeIdleSignal
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
+{-# INLINEABLE runConsumerWithMaybeIdleSignal #-}
 runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
   | ccMaxRunningJobs cc < 1 = do
       logInfo_ "ccMaxRunningJobs < 1, not starting the consumer"
@@ -186,6 +189,7 @@ spawnListener
   -> ConnectionSourceM m
   -> TriggerNotification m
   -> m ThreadId
+{-# INLINEABLE spawnListener #-}
 spawnListener cc cs outbox =
   forkP "listener" $
     case ccNotificationChannel cc of
@@ -227,6 +231,7 @@ spawnMonitor
   -> ConnectionSourceM m
   -> ConsumerID
   -> m ThreadId
+{-# INLINEABLE spawnMonitor #-}
 spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
   runDBT cs ts $ do
     now <- currentTime
@@ -313,9 +318,13 @@ spawnDispatcher
   -> TVar Int
   -> Maybe (TMVar Bool)
   -> m ThreadId
+{-# INLINEABLE spawnDispatcher #-}
 spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
     listenNotification inbox
+    -- When awoken, we always start slow, processing only a single job in a
+    -- batch. Each time we can fill a batch completely with jobs, we grow the maximum
+    -- batch size.
     someJobWasProcessed <- loop 1
     if someJobWasProcessed
       then setIdle False
@@ -350,9 +359,11 @@ spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mId
             . forkP "batch processor"
             . (`finally` subtractJobs)
             . restore
-            $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+            $ mapM startJob batch >>= mapM joinJob >>= updateJobs
 
+        -- Induce some backpressure. If the number of running jobs by all batch
+        -- processors exceed the global limit, we wait. If it does not, start a
+        -- new iteration with a double the limit
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
             jobs <- readTVar runningJobs
@@ -434,6 +445,7 @@ updateJobsQuery
   -> [(idx, Result)]
   -> UTCTime
   -> SQL
+{-# INLINEABLE updateJobsQuery #-}
 updateJobsQuery jobsTable results now =
   smconcat
     [ "WITH removed AS ("

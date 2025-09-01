@@ -26,6 +26,7 @@ import Database.PostgreSQL.PQTypes.SQL.Raw
 -- | Run an action 'm' that returns a finalizer and perform the returned
 -- finalizer after the action 'action' completes.
 finalize :: (MonadMask m, MonadBase IO m) => m (m ()) -> m a -> m a
+{-# INLINEABLE finalize #-}
 finalize m action = do
   finalizer <- newEmptyMVar
   flip finally (tryTakeMVar finalizer >>= fromMaybe (pure ())) $ do
@@ -53,6 +54,7 @@ instance Exception ThrownFrom
 
 -- | Stop execution of a thread.
 stopExecution :: MonadBase IO m => ThreadId -> m ()
+{-# INLINEABLE stopExecution #-}
 stopExecution = flip throwTo StopExecution
 
 ----------------------------------------
@@ -60,6 +62,7 @@ stopExecution = flip throwTo StopExecution
 -- | Modified version of 'fork' that propagates thrown exceptions to the parent
 -- thread.
 forkP :: MonadBaseControl IO m => String -> m () -> m ThreadId
+{-# INLINEABLE forkP #-}
 forkP = forkImpl fork
 
 -- | Modified version of 'TG.fork' that propagates thrown exceptions to the
@@ -70,6 +73,7 @@ gforkP
   -> String
   -> m ()
   -> m (ThreadId, m (T.Result ()))
+{-# INLINEABLE gforkP #-}
 gforkP = forkImpl . TG.fork
 
 ----------------------------------------
@@ -80,6 +84,7 @@ forkImpl
   -> String
   -> m ()
   -> m a
+{-# INLINEABLE forkImpl #-}
 forkImpl ffork tname m = E.mask $ \release -> do
   parent <- myThreadId
   ffork $
@@ -98,6 +103,7 @@ newtype TriggerNotification m = TriggerNotification {triggerNotification :: m ()
 newtype ListenNotification m = ListenNotification {listenNotification :: m ()}
 
 mkNotification :: MonadBaseControl IO m => m (TriggerNotification m, ListenNotification m)
+{-# INLINEABLE mkNotification #-}
 mkNotification = do
   notificationRef <- newEmptyMVar
   pure
