@@ -116,3 +116,4 @@ test-suite consumers-test
 
   type:               exitcode-stdio-1.0
   main-is:            Test.hs
+  other-modules:      Util
