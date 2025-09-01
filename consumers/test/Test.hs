@@ -2,7 +2,6 @@ module Main where
 
 import Control.Applicative ((<|>))
 import Control.Concurrent.STM
-import Control.Exception
 import Control.Monad
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -22,6 +21,8 @@ import Log.Backend.StandardOutput
 import System.Environment
 import System.Exit
 import Test.HUnit qualified as T
+import Test.Tasty
+import Test.Tasty.HUnit
 
 data TestEnvSt = TestEnvSt
   { teCurrentTime :: UTCTime
@@ -53,7 +54,19 @@ runTestEnv connSource logger =
     . unTestEnv
 
 main :: IO ()
-main = void . T.runTestTT $ T.TestCase test
+main = do
+  connectionParamsString <- getConnectionString
+  let connectionSettings = defaultConnectionSettings {csConnInfo = connectionParamsString}
+  defaultMain (allTests connectionSettings)
+
+allTests :: ConnectionSettings -> TestTree
+allTests connectionSource =
+  testGroup
+    "consumers"
+    [ testCase "can consume queue" (testPipeline connectionSource)
+    ]
+
+--------------------
 
 getConnectionString :: IO T.Text
 getConnectionString = do
@@ -86,23 +99,30 @@ getConnectionString = do
     stringFromParams (host, user, database) =
       (T.pack ("host=" <> host <> " user=" <> user <> " dbname=" <> database))
 
-test :: IO ()
-test = do
-  connectionParamsString <- getConnectionString
-  let connSettings =
-        defaultConnectionSettings
-          { csConnInfo = connectionParamsString
-          }
-      ConnectionSource connSource = simpleSource connSettings
-
+testPipeline :: ConnectionSettings -> IO ()
+testPipeline connectionSettings = do
+  let ConnectionSource connSource = simpleSource connectionSettings
   withStdOutLogger $ \logger ->
     runTestEnv connSource logger $ do
-      createTables
-      idleSignal <- liftIO newEmptyTMVarIO
-      putJob 10 >> commit
+      bracket createTables (const dropTables) $ \_ -> do
+        idleSignal <- liftIO newEmptyTMVarIO
+        putJob 10 >> commit
 
-      forM_ [1 .. 10 :: Int] $ \_ -> do
-        -- Move time forward 2hours, because jobs are scheduled 1 hour into future
+        forM_ [1 .. 10 :: Int] $ \_ -> do
+          -- Move time forward 2hours, because jobs are scheduled 1 hour into future
+          modifyTestTime $ addUTCTime (2 * 60 * 60)
+          finalize
+            ( localDomain "process" $
+                runConsumerWithIdleSignal consumerConfig connSource idleSignal
+            )
+            $ do
+              waitUntilTrue idleSignal
+          currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
+
+        -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
+        runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
+        rowcount0 :: Int64 <- fetchOne runIdentity
+        -- Move time 2 hours forward
         modifyTestTime $ addUTCTime (2 * 60 * 60)
         finalize
           ( localDomain "process" $
@@ -110,25 +130,11 @@ test = do
           )
           $ do
             waitUntilTrue idleSignal
-        currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
-
-      -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
-      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
-      rowcount0 :: Int64 <- fetchOne runIdentity
-      -- Move time 2 hours forward
-      modifyTestTime $ addUTCTime (2 * 60 * 60)
-      finalize
-        ( localDomain "process" $
-            runConsumerWithIdleSignal consumerConfig connSource idleSignal
-        )
-        $ do
-          waitUntilTrue idleSignal
-      -- Jobs are designed to double only 10 times, so there should be no jobs left now.
-      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
-      rowcount1 :: Int64 <- fetchOne runIdentity
-      liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
-      liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
-      dropTables
+        -- Jobs are designed to double only 10 times, so there should be no jobs left now.
+        runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
+        rowcount1 :: Int64 <- fetchOne runIdentity
+        liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
+        liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
   where
     waitUntilTrue tmvar = liftIO . atomically $ do
       takeTMVar tmvar >>= \case
