@@ -335,7 +335,9 @@ spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mId
         logInfo "Processing batch" $
           object
             [ "batch_size" .= batchSize
+            , "limit" .= limit
             ]
+
         -- Update runningJobs before forking so that we can adjust
         -- maxBatchSize appropriately later. We also need to mask asynchronous
         -- exceptions here as we rely on correct value of runningJobs to
