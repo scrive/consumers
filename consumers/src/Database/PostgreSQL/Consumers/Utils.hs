@@ -17,6 +17,7 @@ import Control.Exception.Lifted qualified as E
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Trans.Control
+import Data.Functor (void)
 import Data.Maybe
 import Data.Text qualified as T
 import Database.PostgreSQL.PQTypes.Class
@@ -100,6 +101,6 @@ mkNotification :: MonadBaseControl IO m => m (TriggerNotification m, ListenNotif
 mkNotification = do
   notificationRef <- newEmptyMVar
   pure
-    ( TriggerNotification $ tryPutMVar notificationRef () >> pure ()
+    ( TriggerNotification . void $ tryPutMVar notificationRef ()
     , ListenNotification $ takeMVar notificationRef
     )

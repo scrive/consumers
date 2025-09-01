@@ -1,5 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
-
 module Util where
 
 import Control.Applicative ((<|>))
@@ -85,12 +83,10 @@ shiftTestTimeHours :: MonadState TestEnvSt m => NominalDiffTime -> m ()
 shiftTestTimeHours hr = modifyTestTime $ addUTCTime (hr * 60 * 60)
 
 runTestEnv :: ConnectionSourceM (LogT IO) -> Logger -> TestSetup -> TestEnv a -> IO a
-runTestEnv connSource logger TestSetup {..} test = do
-  runLogT "consumers-test" logger defaultLogLevel $
-    runDBT connSource defaultTransactionSettings $
-      (\m' -> fst <$> runStateT m' testEnvironment) $
-        unTestEnv $
-          bracket createTables (const dropTables) (const test)
+runTestEnv connSource logger TestSetup {..} test =
+  (runLogT "consumers-test" logger defaultLogLevel . runDBT connSource defaultTransactionSettings)
+    . (`evalStateT` testEnvironment)
+    $ unTestEnv (bracket createTables (const dropTables) (const test))
   where
     jobTableName = "jobs_" <> tsTestSuffix
     consumerTableName = "consumers_" <> tsTestSuffix
@@ -123,7 +119,7 @@ runTestEnv connSource logger TestSetup {..} test = do
         definitions
 
     dropTables :: TestEnv ()
-    dropTables = do
+    dropTables =
       migrateDatabase
         defaultExtrasOptions
         emptyDbDefinitions
@@ -202,8 +198,7 @@ createTableMigration tbl =
   Migration
     { mgrTableName = tblName tbl
     , mgrFrom = 0
-    , mgrAction = StandardMigration $ do
-        createTable True tbl
+    , mgrAction = StandardMigration $ createTable True tbl
     }
 
 dropTableMigration :: Table -> Migration m
