@@ -105,6 +105,8 @@ test-suite consumers-test
                       monad-time,
                       mtl,
                       stm,
+                      tasty,
+                      tasty-hunit,
                       text,
                       time,
                       transformers-base
@@ -113,3 +115,4 @@ test-suite consumers-test
 
   type:               exitcode-stdio-1.0
   main-is:            Test.hs
+  other-modules:      Util

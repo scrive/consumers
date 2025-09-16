@@ -1,3 +1,12 @@
+# consumers-2.3.3.2 (XXX-XX-XX)
+* Log batch size limits when processing.
+* Split off testing utilities into separate module.
+* Ensure tables are cleaned up on test-teardown.
+* Allow passing in PG variables through environment variables.
+* Expose inlining information so it is possible to specialize consumers at
+  call-sites.
+* Bump Ubuntu image used in CI.
+
 # consumers-2.3.3.1 (2025-04-03)
 * Do not prepare query that updates jobs in the monitor thread.
 

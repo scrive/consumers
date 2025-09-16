@@ -50,6 +50,7 @@ runConsumer
   -- ^ The consumer.
   -> ConnectionSourceM m
   -> m (m ())
+{-# INLINEABLE runConsumer #-}
 runConsumer cc cs = runConsumerWithMaybeIdleSignal cc cs Nothing
 
 runConsumerWithIdleSignal
@@ -67,6 +68,7 @@ runConsumerWithIdleSignal
   -> ConnectionSourceM m
   -> TMVar Bool
   -> m (m ())
+{-# INLINEABLE runConsumerWithIdleSignal #-}
 runConsumerWithIdleSignal cc cs idleSignal = runConsumerWithMaybeIdleSignal cc cs (Just idleSignal)
 
 -- | Run the consumer and also signal whenever the consumer is waiting for
@@ -85,12 +87,13 @@ runConsumerWithMaybeIdleSignal
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
+{-# INLINEABLE runConsumerWithMaybeIdleSignal #-}
 runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
   | ccMaxRunningJobs cc < 1 = do
       logInfo_ "ccMaxRunningJobs < 1, not starting the consumer"
       pure $ pure ()
   | otherwise = do
-      semaphore <- newMVar ()
+      (triggerNotification, listenNotification) <- mkNotification
       runningJobsInfo <- liftBase $ newTVarIO M.empty
       runningJobs <- liftBase $ newTVarIO 0
 
@@ -102,7 +105,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
 
       cid <- registerConsumer cc cs
       localData ["consumer_id" .= show cid] $ do
-        listener <- spawnListener cc cs semaphore
+        listener <- spawnListener cc cs triggerNotification
         monitor <- localDomain "monitor" $ spawnMonitor cc cs cid
         dispatcher <-
           localDomain "dispatcher" $
@@ -110,7 +113,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
               cc
               cs
               cid
-              semaphore
+              listenNotification
               runningJobsInfo
               runningJobs
               mIdleSignal
@@ -184,9 +187,10 @@ spawnListener
   :: (MonadBaseControl IO m, MonadMask m)
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
-  -> MVar ()
+  -> TriggerNotification m
   -> m ThreadId
-spawnListener cc cs semaphore =
+{-# INLINEABLE spawnListener #-}
+spawnListener cc cs outbox =
   forkP "listener" $
     case ccNotificationChannel cc of
       Just chan ->
@@ -204,8 +208,7 @@ spawnListener cc cs semaphore =
         liftBase . threadDelay $ ccNotificationTimeout cc
         signalDispatcher
   where
-    signalDispatcher = do
-      liftBase $ tryPutMVar semaphore ()
+    signalDispatcher = triggerNotification outbox
 
     noTs =
       defaultTransactionSettings
@@ -228,6 +231,7 @@ spawnMonitor
   -> ConnectionSourceM m
   -> ConsumerID
   -> m ThreadId
+{-# INLINEABLE spawnMonitor #-}
 spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
   runDBT cs ts $ do
     now <- currentTime
@@ -309,14 +313,18 @@ spawnDispatcher
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
-  -> MVar ()
+  -> ListenNotification m
   -> TVar (M.Map ThreadId idx)
   -> TVar Int
   -> Maybe (TMVar Bool)
   -> m ThreadId
-spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs mIdleSignal =
+{-# INLINEABLE spawnDispatcher #-}
+spawnDispatcher ConsumerConfig {..} cs cid inbox runningJobsInfo runningJobs mIdleSignal =
   forkP "dispatcher" . forever $ do
-    void $ takeMVar semaphore
+    listenNotification inbox
+    -- When awoken, we always start slow, processing only a single job in a
+    -- batch. Each time we can fill a batch completely with jobs, we grow the maximum
+    -- batch size.
     someJobWasProcessed <- loop 1
     if someJobWasProcessed
       then setIdle False
@@ -336,7 +344,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
         logInfo "Processing batch" $
           object
             [ "batch_size" .= batchSize
+            , "limit" .= limit
             ]
+
         -- Update runningJobs before forking so that we can adjust
         -- maxBatchSize appropriately later. We also need to mask asynchronous
         -- exceptions here as we rely on correct value of runningJobs to
@@ -349,9 +359,11 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . forkP "batch processor"
             . (`finally` subtractJobs)
             . restore
-            $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+            $ mapM startJob batch >>= mapM joinJob >>= updateJobs
 
+        -- Induce some backpressure. If the number of running jobs by all batch
+        -- processors exceed the global limit, we wait. If it does not, start a
+        -- new iteration with a double the limit
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
             jobs <- readTVar runningJobs
@@ -433,6 +445,7 @@ updateJobsQuery
   -> [(idx, Result)]
   -> UTCTime
   -> SQL
+{-# INLINEABLE updateJobsQuery #-}
 updateJobsQuery jobsTable results now =
   smconcat
     [ "WITH removed AS ("

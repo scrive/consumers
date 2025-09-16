@@ -2,6 +2,7 @@
 /dist-newstyle/
 /cabal.project.local
 /cabal.project.freeze
+/haddocks/
 TAGS
 .ghc.environment.*
 .cabal-sandbox
