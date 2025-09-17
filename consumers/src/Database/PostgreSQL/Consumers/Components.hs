@@ -190,7 +190,8 @@ spawnListener cc cs semaphore =
   forkP "listener" $
     case ccNotificationChannel cc of
       Just chan ->
-        runDBT cs noTs
+        runDBT cs defaultTransactionSettings
+          . unsafeWithoutTransaction
           . bracket_ (listen chan) (unlisten chan)
           . forever
           $ do
@@ -206,11 +207,6 @@ spawnListener cc cs semaphore =
   where
     signalDispatcher = do
       liftBase $ tryPutMVar semaphore ()
-
-    noTs =
-      defaultTransactionSettings
-        { tsAutoTransaction = False
-        }
 
 -- | Spawn a thread that monitors working consumers for activity and
 -- periodically updates its own.

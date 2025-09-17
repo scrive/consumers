@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers
-version:            2.3.3.1
+version:            2.3.4.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -57,7 +57,7 @@ library
                   , aeson             >= 2.0
                   , containers        >= 0.5
                   , exceptions        >= 0.10
-                  , hpqtypes          >= 1.11
+                  , hpqtypes          >= 1.13
                   , lifted-base       >= 0.2
                   , lifted-threads    >= 1.0
                   , log-base          >= 0.11
@@ -99,7 +99,7 @@ test-suite consumers-test
                       exceptions,
                       HUnit,
                       hpqtypes,
-                      hpqtypes-extras,
+                      hpqtypes-extras >= 1.19.0.0,
                       log-base,
                       monad-control,
                       monad-time,

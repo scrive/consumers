@@ -1,3 +1,6 @@
+# consumers-2.3.4.0 (2025-??-??)
+* Compatibility with `hpqtypes` >= 1.13.0.0.
+
 # consumers-2.3.3.1 (2025-04-03)
 * Do not prepare query that updates jobs in the monitor thread.
 

@@ -1,1 +1,11 @@
 packages: */*.cabal
+
+source-repository-package
+    type: git
+    location: https://github.com/scrive/hpqtypes
+    tag: 1e739fc3bf674420a2fc2883c67205bd681905cd
+
+source-repository-package
+    type: git
+    location: https://github.com/scrive/hpqtypes-extras
+    tag: cc187c6d818f255c7729aa8af5fbc2562a85224b
