@@ -108,6 +108,7 @@ main = do
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
+        , ccOnFailedToFetchJob = handleFailedToFetchJob 
         , ccOnException = handleException
         , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }
@@ -134,6 +135,11 @@ main = do
     -- queue, mark it as processed, or schedule it for rerun.
     handleException :: SomeException -> (Int64, T.Text) -> AppM Action
     handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+
+    handleFailedToFetchJob :: SomeException -> (Int64, T.Text) -> AppM (Either (Int64, Result) (Int64, T.Text))
+    handleFailedToFetchJob e (idx, _) = do
+      logAttention "Failing to fetch job" $ object ["error" .= show e]
+      pure . Left $ (idx, Failed . RerunAfter $ idays 48)
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.

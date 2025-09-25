@@ -28,6 +28,7 @@ import Database.PostgreSQL.Consumers.Consumer
 import Database.PostgreSQL.Consumers.Utils
 import Database.PostgreSQL.PQTypes
 import Log
+import Data.Either (partitionEithers)
 
 -- | Run the consumer. The purpose of the returned monadic action is to wait for
 -- currently processed jobs and clean up. This function is best used in
@@ -328,6 +329,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
     loop :: Int -> m Bool
     loop limit = do
       (batch, batchSize) <- reserveJobs limit
+      let (failedJobs, succeededJobs) = partitionEithers batch
       when (batchSize > 0) $ do
         logInfo "Processing batch" $
           object
@@ -346,7 +348,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . (`finally` subtractJobs)
             . restore
             $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+              mapM startJob succeededJobs >>= mapM joinJob >>= updateJobs
+              mapM (\failedRow -> sequence (ccRowIndex failedRow, ccOnFailedToFetchJob failedRow)) failedJobs >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -357,7 +360,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: (MonadCatch m) => Int -> m ([Either row job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-
@@ -372,8 +375,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "WHERE id IN (" <> reservedJobs now <> ")"
             , "RETURNING" <+> mintercalate ", " ccJobSelectors
             ]
-      -- Decode lazily as we want the transaction to be as short as possible.
-      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
+      let tryAndParse :: (row -> job) -> row -> Either row job
+          tryAndParse p row = ES.handle (\(SomeException _) -> Left row) (Right $ p row)
+      (,n) . F.toList . fmap (tryAndParse ccJobFetcher) <$> queryResult
       where
         reservedJobs :: UTCTime -> SQL
         reservedJobs now =

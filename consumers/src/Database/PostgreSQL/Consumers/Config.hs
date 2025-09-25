@@ -110,6 +110,12 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that processes a job. It's recommended to process each job in a
   -- separate DB transaction, otherwise you'll have to remember to commit your
   -- changes to the database manually.
+  , ccRowIndex :: !(row -> idx)
+  , ccOnFailedToFetchJob :: !(row -> m Result)
+  -- ^ Action taken if fetching a job failed. It is advised to reenqueue the
+  -- job at a later date and emit a warning in such a case. This is mostly
+  -- to ensure the application using consumers won't fail completely when
+  -- this happens.
   , ccOnException :: !(SomeException -> job -> m Action)
   -- ^ Action taken if a job processing function throws an exception. For
   -- robustness it's best to ensure that it doesn't throw. If it does, the
