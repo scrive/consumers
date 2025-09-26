@@ -78,7 +78,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobSelectors :: ![SQL]
   -- ^ Fields needed to be selected from the jobs table in order to assemble a
   -- job.
-  , ccJobFetcher :: !(row -> job)
+  , ccJobFetcher :: !(row -> Either (idx, String) job)
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
@@ -110,8 +110,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that processes a job. It's recommended to process each job in a
   -- separate DB transaction, otherwise you'll have to remember to commit your
   -- changes to the database manually.
-  , ccRowIndex :: !(row -> idx)
-  , ccOnFailedToFetchJob :: !(row -> m Result)
+  , ccOnFailedToFetchJob :: !(String -> idx -> m Action)
   -- ^ Action taken if fetching a job failed. It is advised to reenqueue the
   -- job at a later date and emit a warning in such a case. This is mostly
   -- to ensure the application using consumers won't fail completely when

@@ -102,13 +102,13 @@ main = do
         { ccJobsTable = "consumers_example_jobs"
         , ccConsumersTable = "consumers_example_consumers"
         , ccJobSelectors = ["id", "message"]
-        , ccJobFetcher = id
+        , ccJobFetcher = Right
         , ccJobIndex = \(i :: Int64, _msg :: T.Text) -> i
         , ccNotificationChannel = Just "consumers_example_chan"
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
-        , ccOnFailedToFetchJob = handleFailedToFetchJob 
+        , ccOnFailedToFetchJob = handleFailedToFetchJob
         , ccOnException = handleException
         , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }
@@ -136,10 +136,10 @@ main = do
     handleException :: SomeException -> (Int64, T.Text) -> AppM Action
     handleException _ _ = pure . RerunAfter $ imicroseconds 500000
 
-    handleFailedToFetchJob :: SomeException -> (Int64, T.Text) -> AppM (Either (Int64, Result) (Int64, T.Text))
-    handleFailedToFetchJob e (idx, _) = do
-      logAttention "Failing to fetch job" $ object ["error" .= show e]
-      pure . Left $ (idx, Failed . RerunAfter $ idays 48)
+    handleFailedToFetchJob :: String -> Int64 -> AppM Action
+    handleFailedToFetchJob msg idx = do
+      logAttention "Failing to fetch job" $ object ["error" .= msg, "job_index" .= idx]
+      pure . RerunAfter $ idays 48
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.

@@ -18,6 +18,7 @@ import Control.Monad.Catch
 import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
+import Data.Either
 import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
@@ -28,7 +29,6 @@ import Database.PostgreSQL.Consumers.Consumer
 import Database.PostgreSQL.Consumers.Utils
 import Database.PostgreSQL.PQTypes
 import Log
-import Data.Either (partitionEithers)
 
 -- | Run the consumer. The purpose of the returned monadic action is to wait for
 -- currently processed jobs and clean up. This function is best used in
@@ -269,7 +269,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
             , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
             , "FOR UPDATE SKIP LOCKED"
             ]
-        stuckJobs <- fetchMany ccJobFetcher
+        stuckJobs <- rights <$> fetchMany ccJobFetcher
         unless (null stuckJobs) $ do
           results <- forM stuckJobs $ \job -> do
             action <- lift $ ccOnException (toException ThreadKilled) job
@@ -349,7 +349,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . restore
             $ do
               mapM startJob succeededJobs >>= mapM joinJob >>= updateJobs
-              mapM (\failedRow -> sequence (ccRowIndex failedRow, ccOnFailedToFetchJob failedRow)) failedJobs >>= updateJobs
+              mapM (\(idx, string) -> sequence (idx, Failed <$> ccOnFailedToFetchJob string idx)) failedJobs >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -360,7 +360,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: (MonadCatch m) => Int -> m ([Either row job], Int)
+    reserveJobs :: MonadCatch m => Int -> m ([Either (idx, String) job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-
@@ -375,11 +375,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "WHERE id IN (" <> reservedJobs now <> ")"
             , "RETURNING" <+> mintercalate ", " ccJobSelectors
             ]
-      let tryAndParse row = ES.handle
-            (\(SomeException _) -> pure $ Left row)
-            (fmap Right . liftBase . evaluate $ ccJobFetcher row)
-      _ {- ([row], [job]) -} <- fmap partitionEithers . traverse tryAndParse . F.toList =<< queryResult
-      undefined
+      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
       where
         reservedJobs :: UTCTime -> SQL
         reservedJobs now =
