@@ -2,6 +2,7 @@ module Database.PostgreSQL.Consumers.Config
   ( Action (..)
   , Result (..)
   , ConsumerConfig (..)
+  , shouldNotFail
   ) where
 
 import Control.Exception (SomeException)
@@ -12,6 +13,7 @@ import Database.PostgreSQL.PQTypes.Interval
 import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
 import Database.PostgreSQL.PQTypes.SQL.Raw
+import Log
 
 -- | Action to take after a job was processed.
 data Action
@@ -122,3 +124,11 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobLogData :: !(job -> [A.Pair])
   -- ^ Data to attach to each log message while processing a job.
   }
+
+-- | A default implementation for ccOnFailedToFetchJob,
+-- when the parsing of the row should never fail.
+-- This will create a logAttention and reenqueue for the next day.
+shouldNotFail :: MonadLog m => String -> idx -> m Action
+shouldNotFail msg _ = do
+  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg]
+  pure . RerunAfter $ idays 48
