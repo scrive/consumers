@@ -17,7 +17,7 @@ maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
-tested-with:        GHC == { 8.10.7, 9.0.2, 9.2.8, 9.4.8, 9.6.7, 9.8.4, 9.10.2, 9.12.2, 9.14.1 }
+tested-with:        GHC == { 9.2.8, 9.4.8, 9.6.7, 9.8.4, 9.10.3, 9.12.2, 9.14.1 }
 
 bug-reports:   https://github.com/scrive/consumers/issues
 source-repository head
@@ -53,7 +53,7 @@ library
                     Database.PostgreSQL.Consumers.Components,
                     Database.PostgreSQL.Consumers.Utils
 
-  build-depends:    base              >= 4.14   && < 5
+  build-depends:    base              >= 4.16   && < 5
                   , aeson             >= 2.0
                   , containers        >= 0.5
                   , exceptions        >= 0.10
