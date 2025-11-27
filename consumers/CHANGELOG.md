@@ -1,4 +1,4 @@
-# consumers-2.3.4.0 (2025-??-??)
+# consumers-2.3.4.0 (2025-11-27)
 * Compatibility with `hpqtypes` >= 1.13.0.0.
 
 # consumers-2.3.3.1 (2025-04-03)

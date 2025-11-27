@@ -1,7 +1,7 @@
 # consumers
 
-[![Hackage version](https://img.shields.io/hackage/v/consumers.svg?label=Hackage)](https://hackage.haskell.org/package/consumers)
 [![Haskell-CI](https://github.com/scrive/consumers/actions/workflows/haskell-ci.yml/badge.svg?branch=master)](https://github.com/scrive/consumers/actions/workflows/haskell-ci.yml)
+[![Hackage version](https://img.shields.io/hackage/v/consumers.svg?label=Hackage)](https://hackage.haskell.org/package/consumers)
 
 Library for setting up concurrent consumers of data stored inside
 PostgreSQL database in a simple, declarative manner.
