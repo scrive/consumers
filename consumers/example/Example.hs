@@ -108,7 +108,7 @@ main = do
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
-        , ccOnFailedToFetchJob = shouldNotFail
+        , ccOnFailedToFetchJob = defaultOnFailedToFetchJob
         , ccOnException = handleException
         , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }

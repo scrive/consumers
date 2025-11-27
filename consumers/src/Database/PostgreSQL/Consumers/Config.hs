@@ -2,7 +2,7 @@ module Database.PostgreSQL.Consumers.Config
   ( Action (..)
   , Result (..)
   , ConsumerConfig (..)
-  , shouldNotFail
+  , defaultOnFailedToFetchJob
   ) where
 
 import Control.Exception (SomeException)
@@ -14,6 +14,7 @@ import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
 import Database.PostgreSQL.PQTypes.SQL.Raw
 import Log
+import Data.Text
 
 -- | Action to take after a job was processed.
 data Action
@@ -80,7 +81,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobSelectors :: ![SQL]
   -- ^ Fields needed to be selected from the jobs table in order to assemble a
   -- job.
-  , ccJobFetcher :: !(row -> Either (idx, String) job)
+  , ccJobFetcher :: !(row -> Either (idx, Text) job)
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
@@ -112,7 +113,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that processes a job. It's recommended to process each job in a
   -- separate DB transaction, otherwise you'll have to remember to commit your
   -- changes to the database manually.
-  , ccOnFailedToFetchJob :: !(String -> idx -> m Action)
+  , ccOnFailedToFetchJob :: !(Text -> idx -> m Action)
   -- ^ Action taken if fetching a job failed. It is advised to reenqueue the
   -- job at a later date and emit a warning in such a case. This is mostly
   -- to ensure the application using consumers won't fail completely when
@@ -128,7 +129,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
 -- | A default implementation for ccOnFailedToFetchJob,
 -- when the parsing of the row should never fail.
 -- This will create a logAttention and reenqueue for the next day.
-shouldNotFail :: MonadLog m => String -> idx -> m Action
-shouldNotFail msg _ = do
-  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg]
+defaultOnFailedToFetchJob :: (MonadLog m, Show idx) => Text -> idx -> m Action
+defaultOnFailedToFetchJob msg idx = do
+  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "idx" A..= show idx]
   pure . RerunAfter $ idays 48

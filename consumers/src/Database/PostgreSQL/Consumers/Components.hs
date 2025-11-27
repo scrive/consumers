@@ -24,6 +24,7 @@ import Data.Function
 import Data.Int
 import Data.Map.Strict qualified as M
 import Data.Monoid.Utils
+import Data.Text qualified as T
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
 import Database.PostgreSQL.Consumers.Utils
@@ -349,7 +350,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . restore
             $ do
               mapM startJob succeededJobs >>= mapM joinJob >>= updateJobs
-              mapM (\(idx, string) -> sequence (idx, Failed <$> ccOnFailedToFetchJob string idx)) failedJobs >>= updateJobs
+              mapM (\(idx, txt) -> sequence (idx, Failed <$> ccOnFailedToFetchJob txt idx)) failedJobs >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -360,7 +361,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: MonadCatch m => Int -> m ([Either (idx, String) job], Int)
+    reserveJobs :: MonadCatch m => Int -> m ([Either (idx, T.Text) job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-
