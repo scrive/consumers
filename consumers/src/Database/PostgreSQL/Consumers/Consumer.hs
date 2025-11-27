@@ -36,7 +36,7 @@ registerConsumer
   => ConsumerConfig n idx job
   -> ConnectionSourceM m
   -> m ConsumerID
-registerConsumer ConsumerConfig {..} cs = runDBT cs ts $ do
+registerConsumer ConsumerConfig {..} cs = runDBT cs defaultTransactionSettings $ do
   now <- currentTime
   runPreparedSQL_ (preparedSqlName "registerConsumer" ccConsumersTable) $
     smconcat
@@ -45,11 +45,6 @@ registerConsumer ConsumerConfig {..} cs = runDBT cs ts $ do
       , "RETURNING id"
       ]
   fetchOne runIdentity
-  where
-    ts =
-      defaultTransactionSettings
-        { tsAutoTransaction = False
-        }
 
 -- | Unregister consumer with a given ID.
 unregisterConsumer
@@ -60,7 +55,7 @@ unregisterConsumer
   -> m ()
 unregisterConsumer ConsumerConfig {..} cs wid = runDBT cs ts $ do
   -- Free tasks manually in case there is no foreign key constraint on
-  -- reserved_by,
+  -- reserved_by.
   runPreparedSQL_ (preparedSqlName "deregisterJobs" ccJobsTable) $
     smconcat
       [ "UPDATE" <+> raw ccJobsTable
