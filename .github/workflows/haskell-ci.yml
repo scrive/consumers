@@ -8,9 +8,9 @@
 #
 # For more information, see https://github.com/haskell-CI/haskell-ci
 #
-# version: 0.19.20251105
+# version: 0.19.20251118
 #
-# REGENDATA ("0.19.20251105",["github","cabal.project","--config=cabal.haskell-ci"])
+# REGENDATA ("0.19.20251118",["github","cabal.project","--config=cabal.haskell-ci"])
 #
 name: Haskell-CI
 on:
@@ -41,9 +41,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - compiler: ghc-9.14.0.20251028
+          - compiler: ghc-9.14.0.20251104
             compilerKind: ghc
-            compilerVersion: 9.14.0.20251028
+            compilerVersion: 9.14.0.20251104
             setup-method: ghcup-prerelease
             allow-failure: false
           - compiler: ghc-9.12.2
@@ -234,15 +234,6 @@ jobs:
           echo "package consumers" >> cabal.project
           echo "    ghc-options: -Werror=incomplete-patterns -Werror=incomplete-uni-patterns" >> cabal.project
           cat >> cabal.project <<EOF
-          source-repository-package
-            type:     git
-            location: https://github.com/scrive/hpqtypes
-            tag:      1e739fc3bf674420a2fc2883c67205bd681905cd
-
-          source-repository-package
-            type:     git
-            location: https://github.com/scrive/hpqtypes-extras
-            tag:      cc187c6d818f255c7729aa8af5fbc2562a85224b
           EOF
           if $HEADHACKAGE; then
           echo "allow-newer: $($HCPKG list --simple-output | sed -E 's/([a-zA-Z-]+)-[0-9.]+/*:\1,/g')" >> cabal.project
