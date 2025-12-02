@@ -117,7 +117,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Action taken if fetching a job failed. It is advised to reenqueue the
   -- job at a later date and emit a warning in such a case. This is mostly
   -- to ensure the application using consumers won't fail completely when
-  -- this happens.
+  -- this happens. See 'defaultOnFailedToFetchJob' for a simple implementation
+  -- which logs and reenqueue.
   , ccOnException :: !(SomeException -> job -> m Action)
   -- ^ Action taken if a job processing function throws an exception. For
   -- robustness it's best to ensure that it doesn't throw. If it does, the
