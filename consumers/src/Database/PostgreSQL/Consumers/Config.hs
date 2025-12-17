@@ -7,6 +7,7 @@ module Database.PostgreSQL.Consumers.Config
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
+import Data.Text
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
@@ -14,7 +15,6 @@ import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
 import Database.PostgreSQL.PQTypes.SQL.Raw
 import Log
-import Data.Text
 
 -- | Action to take after a job was processed.
 data Action
