@@ -129,7 +129,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
 
 -- | A default implementation for ccOnFailedToFetchJob,
 -- when the parsing of the row should never fail.
--- This will create a logAttention and reenqueue, to be replayed in 2 days.
+-- This will create a logAttention and reenqueue, to be replayed in one day.
 defaultOnFailedToFetchJob :: (MonadLog m, Show idx) => Text -> idx -> m Action
 defaultOnFailedToFetchJob msg idx = do
   logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "job_id" A..= show idx]

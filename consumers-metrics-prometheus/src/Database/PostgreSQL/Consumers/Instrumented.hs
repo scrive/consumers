@@ -122,8 +122,8 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
       . Prom.vector "job_name"
       $ Prom.counter
         Prom.Info
-          { metricName = "consumers_job_parsing_failures",
-            metricHelp = "Number of jobs that failed to parse, by job_name"
+          { metricName = "consumers_job_parsing_failures"
+          , metricHelp = "Number of jobs that failed to parse, by job_name"
           }
   pure $ ConsumerMetrics {..}
 
