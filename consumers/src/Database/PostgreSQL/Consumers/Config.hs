@@ -7,7 +7,7 @@ module Database.PostgreSQL.Consumers.Config
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
-import Data.Text
+import Data.Text (Text)
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
@@ -132,5 +132,5 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
 -- This will create a logAttention and reenqueue, to be replayed in 2 days.
 defaultOnFailedToFetchJob :: (MonadLog m, Show idx) => Text -> idx -> m Action
 defaultOnFailedToFetchJob msg idx = do
-  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "idx" A..= show idx]
-  pure . RerunAfter $ ihours 48
+  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "job_id" A..= show idx]
+  pure . RerunAfter $ idays 1

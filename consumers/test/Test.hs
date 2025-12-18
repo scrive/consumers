@@ -150,7 +150,7 @@ test = do
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
-        , ccOnFailedToFetchJob = \_ _ -> pure . RerunAfter $ idays 14
+        , ccOnFailedToFetchJob = defaultOnFailedToFetchJob
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException

@@ -270,18 +270,22 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
             , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
             , "FOR UPDATE SKIP LOCKED"
             ]
-        stuckJobs <- rights <$> fetchMany ccJobFetcher
+        stuckJobs <- fetchMany ccJobFetcher
         unless (null stuckJobs) $ do
           results <- forM stuckJobs $ \job -> do
-            action <- lift $ ccOnException (toException ThreadKilled) job
-            pure (ccJobIndex job, Failed action)
+            action <- lift $ 
+              either 
+                (\(idx, t) -> ccOnFailedToFetchJob t idx) 
+                (ccOnException (toException ThreadKilled))
+                job
+            pure (either fst ccJobIndex job, Failed action)
           runSQL_ $ updateJobsQuery ccJobsTable results now
         runPreparedSQL_ (preparedSqlName "removeInactive" ccConsumersTable) $
           smconcat
             [ "DELETE FROM" <+> raw ccConsumersTable
             , "WHERE id = ANY(" <?> Array1 inactive <+> ")"
             ]
-        pure (length inactive, map ccJobIndex stuckJobs)
+        pure (length inactive, fmap (either fst ccJobIndex) stuckJobs)
   when (inactiveConsumers > 0) $ do
     logInfo "Unregistered inactive consumers" $
       object
@@ -361,7 +365,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: MonadCatch m => Int -> m ([Either (idx, T.Text) job], Int)
+    reserveJobs :: Int -> m ([Either (idx, T.Text) job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-
@@ -376,6 +380,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "WHERE id IN (" <> reservedJobs now <> ")"
             , "RETURNING" <+> mintercalate ", " ccJobSelectors
             ]
+      -- Decode lazily as we want the transaction to be as short as possible
       (,n) . F.toList . fmap ccJobFetcher <$> queryResult
       where
         reservedJobs :: UTCTime -> SQL
