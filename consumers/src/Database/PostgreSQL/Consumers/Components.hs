@@ -273,11 +273,12 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
         stuckJobs <- fetchMany ccJobFetcher
         unless (null stuckJobs) $ do
           results <- forM stuckJobs $ \job -> do
-            action <- lift $ 
-              either 
-                (\(idx, t) -> ccOnFailedToFetchJob t idx) 
-                (ccOnException (toException ThreadKilled))
-                job
+            action <-
+              lift $
+                either
+                  (\(idx, t) -> ccOnFailedToFetchJob t idx)
+                  (ccOnException (toException ThreadKilled))
+                  job
             pure (either fst ccJobIndex job, Failed action)
           runSQL_ $ updateJobsQuery ccJobsTable results now
         runPreparedSQL_ (preparedSqlName "removeInactive" ccConsumersTable) $
