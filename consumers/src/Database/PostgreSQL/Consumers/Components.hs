@@ -154,6 +154,15 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
                   , "action" .= show action
                   ]
               pure action
+        , ccOnFailedToFetchJob = \t i ->
+            ccOnFailedToFetchJob cc0 t i `ES.catchAny` \handlerEx -> do
+              let action = RerunAfter $ idays 1
+              logAttention "ccOnFailedToFetchJob threw an exception" $
+                object
+                  [ "exception" .= show handlerEx
+                  , "action" .= show action
+                  ]
+              pure action
         }
 
     waitForRunningJobs runningJobsInfo runningJobs = do
@@ -381,7 +390,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "WHERE id IN (" <> reservedJobs now <> ")"
             , "RETURNING" <+> mintercalate ", " ccJobSelectors
             ]
-      -- Decode lazily as we want the transaction to be as short as possible
+      -- Decode lazily as we want the transaction to be as short as possible.
       (,n) . F.toList . fmap ccJobFetcher <$> queryResult
       where
         reservedJobs :: UTCTime -> SQL
