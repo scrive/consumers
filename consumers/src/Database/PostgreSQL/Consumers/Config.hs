@@ -132,5 +132,5 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
 -- This will create a logAttention and reenqueue, to be replayed in one day.
 defaultOnFailedToFetchJob :: (MonadLog m, Show idx) => Text -> idx -> m Action
 defaultOnFailedToFetchJob msg idx = do
-  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "job_id" A..= show idx]
+  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "consumers_job_id" A..= show idx]
   pure . RerunAfter $ idays 1
