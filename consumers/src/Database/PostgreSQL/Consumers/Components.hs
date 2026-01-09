@@ -18,11 +18,13 @@ import Control.Monad.Catch
 import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
+import Data.Either
 import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
 import Data.Map.Strict qualified as M
 import Data.Monoid.Utils
+import Data.Text qualified as T
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
 import Database.PostgreSQL.Consumers.Utils
@@ -152,6 +154,15 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
                   , "action" .= show action
                   ]
               pure action
+        , ccOnFailedToFetchJob = \t i ->
+            ccOnFailedToFetchJob cc0 t i `ES.catchAny` \handlerEx -> do
+              let action = RerunAfter $ idays 1
+              logAttention "ccOnFailedToFetchJob threw an exception" $
+                object
+                  [ "exception" .= show handlerEx
+                  , "action" .= show action
+                  ]
+              pure action
         }
 
     waitForRunningJobs runningJobsInfo runningJobs = do
@@ -271,15 +282,20 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
         stuckJobs <- fetchMany ccJobFetcher
         unless (null stuckJobs) $ do
           results <- forM stuckJobs $ \job -> do
-            action <- lift $ ccOnException (toException ThreadKilled) job
-            pure (ccJobIndex job, Failed action)
+            action <-
+              lift $
+                either
+                  (\(idx, t) -> ccOnFailedToFetchJob t idx)
+                  (ccOnException (toException ThreadKilled))
+                  job
+            pure (either fst ccJobIndex job, Failed action)
           runSQL_ $ updateJobsQuery ccJobsTable results now
         runPreparedSQL_ (preparedSqlName "removeInactive" ccConsumersTable) $
           smconcat
             [ "DELETE FROM" <+> raw ccConsumersTable
             , "WHERE id = ANY(" <?> Array1 inactive <+> ")"
             ]
-        pure (length inactive, map ccJobIndex stuckJobs)
+        pure (length inactive, fmap (either fst ccJobIndex) stuckJobs)
   when (inactiveConsumers > 0) $ do
     logInfo "Unregistered inactive consumers" $
       object
@@ -328,6 +344,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
     loop :: Int -> m Bool
     loop limit = do
       (batch, batchSize) <- reserveJobs limit
+      let (failedJobs, succeededJobs) = partitionEithers batch
       when (batchSize > 0) $ do
         logInfo "Processing batch" $
           object
@@ -346,7 +363,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . (`finally` subtractJobs)
             . restore
             $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+              mapM startJob succeededJobs >>= mapM joinJob >>= updateJobs
+              mapM (\(idx, txt) -> sequence (idx, Failed <$> ccOnFailedToFetchJob txt idx)) failedJobs >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -357,7 +375,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m ([Either (idx, T.Text) job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-

@@ -79,6 +79,7 @@ data ConsumerMetrics = ConsumerMetrics
   , jobsOverdue :: Prom.Vector Prom.Label1 Prom.Gauge
   , jobsReserved :: Prom.Vector Prom.Label1 Prom.Counter
   , jobsExecution :: Prom.Vector Prom.Label2 Prom.Histogram
+  , jobsParsingFailure :: Prom.Vector Prom.Label1 Prom.Counter
   }
 
 registerConsumerMetrics :: MonadBaseControl IO m => ConsumerMetricsConfig -> m ConsumerMetrics
@@ -116,6 +117,14 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
           , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result"
           }
         jobExecutionBuckets
+  jobsParsingFailure <-
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.counter
+        Prom.Info
+          { metricName = "consumers_job_parsing_failures"
+          , metricHelp = "Number of jobs that failed to parse, by job_name"
+          }
   pure $ ConsumerMetrics {..}
 
 -- | Run a 'ConsumerConfig', but with instrumentation added.
@@ -235,7 +244,7 @@ instrumentConsumerConfig
   -> ConsumerConfig m idx job
   -> ConsumerConfig m idx job
 instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
-  ConsumerConfig {ccProcessJob = ccProcessJob', ..}
+  ConsumerConfig {ccProcessJob = ccProcessJob', ccOnFailedToFetchJob = ccOnFailedToFetchJob', ..}
   where
     jobName = unRawSQL ccJobsTable
 
@@ -263,3 +272,7 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
       liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
 
     handleEx e = logAttention "Exception while instrumenting job" $ object ["exception" .= show e]
+
+    ccOnFailedToFetchJob' errorTxt idx = do
+      liftBase $ Prom.withLabel jobsParsingFailure jobName Prom.incCounter
+      ccOnFailedToFetchJob errorTxt idx

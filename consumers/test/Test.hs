@@ -145,11 +145,12 @@ test = do
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
         , ccJobSelectors = ["id", "countdown"]
-        , ccJobFetcher = id
+        , ccJobFetcher = Right
         , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
+        , ccOnFailedToFetchJob = defaultOnFailedToFetchJob
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException

@@ -102,12 +102,13 @@ main = do
         { ccJobsTable = "consumers_example_jobs"
         , ccConsumersTable = "consumers_example_consumers"
         , ccJobSelectors = ["id", "message"]
-        , ccJobFetcher = id
+        , ccJobFetcher = Right
         , ccJobIndex = \(i :: Int64, _msg :: T.Text) -> i
         , ccNotificationChannel = Just "consumers_example_chan"
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
+        , ccOnFailedToFetchJob = defaultOnFailedToFetchJob
         , ccOnException = handleException
         , ccJobLogData = \(i, _) -> ["job_id" .= i]
         }
