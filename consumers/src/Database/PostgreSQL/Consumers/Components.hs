@@ -297,10 +297,12 @@ spawnDispatcher
   :: forall m idx job
    . ( MonadBaseControl IO m
      , MonadLog m
+     , MonadCatch m
      , MonadMask m
      , MonadTime m
      , Show idx
      , ToSQL idx
+     , FromSQL idx
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -360,23 +362,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
     reserveJobs :: Int -> m ([job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
-      n <-
-        runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-          smconcat
-            [ "UPDATE" <+> raw ccJobsTable <+> "SET"
-            , "  reserved_by =" <?> cid
-            , ", attempts = CASE"
-            , "    WHEN finished_at IS NULL THEN attempts + 1"
-            , "    ELSE 1"
-            , "  END"
-            , "WHERE id IN (" <> reservedJobs now <> ")"
-            , "RETURNING" <+> mintercalate ", " ccJobSelectors
-            ]
-      -- Decode lazily as we want the transaction to be as short as possible.
-      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
-      where
-        reservedJobs :: UTCTime -> SQL
-        reservedJobs now =
+      runPreparedSQL_ (preparedSqlName "getReservedIds" ccJobsTable) $
           smconcat
             [ "SELECT id FROM" <+> raw ccJobsTable
             , "WHERE"
@@ -387,6 +373,31 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "LIMIT" <?> limit
             , "FOR UPDATE SKIP LOCKED"
             ]
+      jobIds :: [idx] <- fetchMany runIdentity
+      let onFailure (SomeException e) = do
+            logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object [ "error" .= show e, "job_ids" .= show jobIds ]
+            let toUpdate :: [(idx, Result)]
+                toUpdate = (, Failed . RerunAfter . ihours $ 6) <$> jobIds
+            lift $ updateJobs toUpdate
+            pure ([], 0)
+      handle
+        onFailure
+        (do
+           logInfo "Reserving jobs" $ object ["job_ids" .= show jobIds]
+           n <- runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
+                 smconcat
+                   [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+                   , "  reserved_by =" <?> cid
+                   , ", attempts = CASE"
+                   , "    WHEN finished_at IS NULL THEN attempts + 1"
+                   , "    ELSE 1"
+                   , "  END"
+                   , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
+                   , "RETURNING" <+> mintercalate ", " ccJobSelectors
+                   ]
+           -- Decode lazily as we want the transaction to be as short as possible.
+           (,n) . F.toList . fmap ccJobFetcher <$> queryResult
+        )
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
