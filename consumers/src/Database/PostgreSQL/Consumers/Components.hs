@@ -22,6 +22,7 @@ import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
 import Data.Map.Strict qualified as M
+import Data.Maybe (catMaybes)
 import Data.Monoid.Utils
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
@@ -348,7 +349,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . (`finally` subtractJobs)
             . restore
             $ do
-              mapM startJob batch >>= mapM joinJob >>= updateJobs
+              mapM startJob (catMaybes batch) >>= mapM joinJob >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -359,45 +360,58 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m ([Maybe job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       runPreparedSQL_ (preparedSqlName "getReservedIds" ccJobsTable) $
-          smconcat
-            [ "SELECT id FROM" <+> raw ccJobsTable
-            , "WHERE"
-            , "       reserved_by IS NULL"
-            , "       AND run_at IS NOT NULL"
-            , "       AND run_at <= " <?> now
-            , "       ORDER BY run_at"
-            , "LIMIT" <?> limit
-            , "FOR UPDATE SKIP LOCKED"
-            ]
+        smconcat
+          [ "SELECT id FROM" <+> raw ccJobsTable
+          , "WHERE"
+          , "       reserved_by IS NULL"
+          , "       AND run_at IS NOT NULL"
+          , "       AND run_at <= " <?> now
+          , "       ORDER BY run_at"
+          , "LIMIT" <?> limit
+          , "FOR UPDATE SKIP LOCKED"
+          ]
       jobIds :: [idx] <- fetchMany runIdentity
-      let onFailure (SomeException e) = do
-            logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object [ "error" .= show e, "job_ids" .= show jobIds ]
-            let toUpdate :: [(idx, Result)]
-                toUpdate = (, Failed . RerunAfter . ihours $ 6) <$> jobIds
-            lift $ updateJobs toUpdate
-            pure ([], 0)
-      handle
-        onFailure
-        (do
-           logInfo "Reserving jobs" $ object ["job_ids" .= show jobIds]
-           n <- runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-                 smconcat
-                   [ "UPDATE" <+> raw ccJobsTable <+> "SET"
-                   , "  reserved_by =" <?> cid
-                   , ", attempts = CASE"
-                   , "    WHEN finished_at IS NULL THEN attempts + 1"
-                   , "    ELSE 1"
-                   , "  END"
-                   , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
-                   , "RETURNING" <+> mintercalate ", " ccJobSelectors
-                   ]
-           -- Decode lazily as we want the transaction to be as short as possible.
-           (,n) . F.toList . fmap ccJobFetcher <$> queryResult
-        )
+      if null jobIds
+        then pure ([], 0)
+        else do
+          let onFailure (SomeException e) = do
+                logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_ids" .= show jobIds]
+                let toUpdate :: [(idx, Result)]
+                    toUpdate = (,Failed . RerunAfter . ihours $ 6) <$> jobIds
+                lift $ updateJobs toUpdate
+                pure ([], 0)
+          handle
+            onFailure
+            ( do
+                logInfo "Reserving jobs" $ object ["job_ids" .= show jobIds]
+                n <-
+                  runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
+                    smconcat
+                      [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+                      , "  reserved_by =" <?> cid
+                      , ", attempts = CASE"
+                      , "    WHEN finished_at IS NULL THEN attempts + 1"
+                      , "    ELSE 1"
+                      , "  END"
+                      , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
+                      , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
+                      ]
+                qr <- queryResult
+                results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
+                  let jobId = runIdentity jobIdRow
+                  in handle
+                      ( \(SomeException e) -> do
+                          logAttention "Failure to fetch job, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_id" .= show jobId]
+                          lift $ updateJobs [(jobId, Failed . RerunAfter . ihours $ 6)]
+                          pure Nothing
+                      )
+                      (pure . Just $ ccJobFetcher other)
+                pure (results, n)
+            )
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
