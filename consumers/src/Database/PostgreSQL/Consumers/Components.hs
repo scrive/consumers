@@ -383,14 +383,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                 let toUpdate :: [(idx, Result)]
                     toUpdate = (,Failed . RerunAfter . ihours $ 6) <$> jobIds
                 lift $ updateJobs toUpdate
-                pure ([], 0)
-          handle
-            onFailure
-            ( do
-                logInfo "Reserving jobs" $ object ["job_ids" .= show jobIds]
-                n <-
-                  runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-                    smconcat
+                pure 0
+          n <- handle
+                 onFailure . runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $ smconcat
                       [ "UPDATE" <+> raw ccJobsTable <+> "SET"
                       , "  reserved_by =" <?> cid
                       , ", attempts = CASE"
@@ -400,8 +395,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                       , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
                       , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
                       ]
-                qr <- queryResult
-                results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
+          qr <- queryResult
+          results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
                   let jobId = runIdentity jobIdRow
                   in handle
                       ( \(SomeException e) -> do
@@ -410,8 +405,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                           pure Nothing
                       )
                       (pure . Just $ ccJobFetcher other)
-                pure (results, n)
-            )
+          pure (results, n)
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
