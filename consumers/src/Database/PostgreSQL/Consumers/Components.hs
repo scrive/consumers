@@ -10,7 +10,7 @@ import Control.Concurrent.Lifted
 import Control.Concurrent.STM hiding (atomically)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.Thread.Lifted qualified as T
-import Control.Exception (AsyncException (ThreadKilled))
+import Control.Exception (AsyncException (ThreadKilled), evaluate)
 import Control.Exception.Safe qualified as ES
 import Control.Monad
 import Control.Monad.Base
@@ -408,7 +408,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                           lift $ updateJobs [(jobId, Failed . RerunAfter . ihours $ 6)]
                           pure Nothing
                       )
-                      (pure . Just $ ccJobFetcher other)
+                       (liftBase . evaluate $ Just $! ccJobFetcher other)
                 pure (results, n)
             )
 
