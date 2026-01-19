@@ -377,15 +377,19 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
       jobIds :: [idx] <- fetchMany runIdentity
       if null jobIds
         then pure ([], 0)
-        else do
-          let onFailure (SomeException e) = do
+        else
+          handle
+            ( \(SomeException e) -> do
                 logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_ids" .= show jobIds]
                 let toUpdate :: [(idx, Result)]
                     toUpdate = (,Failed . RerunAfter . ihours $ 6) <$> jobIds
                 lift $ updateJobs toUpdate
-                pure 0
-          n <- handle
-                 onFailure . runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $ smconcat
+                pure ([], 0)
+            )
+            ( do
+                n <-
+                  runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
+                    smconcat
                       [ "UPDATE" <+> raw ccJobsTable <+> "SET"
                       , "  reserved_by =" <?> cid
                       , ", attempts = CASE"
@@ -395,8 +399,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                       , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
                       , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
                       ]
-          qr <- queryResult
-          results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
+                qr <- queryResult
+                results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
                   let jobId = runIdentity jobIdRow
                   in handle
                       ( \(SomeException e) -> do
@@ -405,7 +409,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                           pure Nothing
                       )
                       (pure . Just $ ccJobFetcher other)
-          pure (results, n)
+                pure (results, n)
+            )
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
