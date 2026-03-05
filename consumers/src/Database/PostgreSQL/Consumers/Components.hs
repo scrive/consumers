@@ -383,7 +383,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                 logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_ids" .= show jobIds]
                 let toUpdate :: [(idx, Result)]
                     toUpdate = (,Failed . RerunAfter . ihours $ 6) <$> jobIds
+                rollback
                 lift $ updateJobs toUpdate
+                commit
                 pure ([], 0)
             )
             ( do
@@ -405,7 +407,9 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                   in handle
                       ( \(SomeException e) -> do
                           logAttention "Failure to fetch job, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_id" .= show jobId]
+                          rollback
                           lift $ updateJobs [(jobId, Failed . RerunAfter . ihours $ 6)]
+                          commit
                           pure Nothing
                       )
                        (liftBase . evaluate $ Just $! ccJobFetcher other)
