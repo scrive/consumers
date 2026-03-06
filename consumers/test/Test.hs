@@ -146,7 +146,7 @@ test = do
       runSQL_ "SELECT run_at from consumers_test_jobs"
       newRunTimes :: [UTCTime] <- fetchMany runIdentity
       liftIO $ do
-         T.assertEqual "All jobs should fail if the query to fetch them is wrong" 5 (length newRunTimes)
+        T.assertEqual "All jobs should fail if the query to fetch them is wrong" 5 (length newRunTimes)
       areInSixHours newRunTimes
       -- Clean up.
       runSQL_ "DELETE FROM consumers_test_jobs"
@@ -162,13 +162,13 @@ test = do
     printUsage = do
       prog <- getProgName
       putStrLn $ "Usage: " <> prog <> " <connection info string>"
-    
+
     areInSixHours toCheck = do
       let inXHours n = addUTCTime (60 * 60 * n) <$> currentTime
       in5Hours <- inXHours 5
       in7Hours <- inXHours 7
-      liftIO $ T.assertBool "The failed jobs should be planned to run more than 5 hours later" $ all (in5Hours <) toCheck
-      liftIO $ T.assertBool "The failed jobs should be planned to run less than 7 hours later" $ all (in7Hours >) toCheck
+      liftIO . T.assertBool "The failed jobs should be planned to run more than 5 hours later" $ all (in5Hours <) toCheck
+      liftIO . T.assertBool "The failed jobs should be planned to run less than 7 hours later" $ all (in7Hours >) toCheck
 
     definitions = emptyDbDefinitions {dbTables = [consumersTable, jobsTable]}
     -- NB: order of migrations is important.
@@ -216,10 +216,10 @@ test = do
     simulatingFailure _ = error "Simulating row fetch error"
 
     consumerFailingSingleJobConfig =
-      consumerConfig { ccJobFetcher = simulatingFailure }
-    
+      consumerConfig {ccJobFetcher = simulatingFailure}
+
     consumerFailingAllJobsConfig =
-      consumerConfig { ccJobSelectors = ["id", "countdown::bigint"] }
+      consumerConfig {ccJobSelectors = ["id", "countdown::bigint"]}
 
     putJob :: Int32 -> TestEnv ()
     putJob countdown = localDomain "put" $ do

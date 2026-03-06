@@ -412,7 +412,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                           commit
                           pure Nothing
                       )
-                       (liftBase . evaluate $ Just $! ccJobFetcher other)
+                      (liftBase . evaluate $ Just $! ccJobFetcher other)
                 pure (results, n)
             )
 
