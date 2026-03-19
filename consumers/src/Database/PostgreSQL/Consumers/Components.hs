@@ -298,7 +298,6 @@ spawnDispatcher
   :: forall m idx job
    . ( MonadBaseControl IO m
      , MonadLog m
-     , MonadCatch m
      , MonadMask m
      , MonadTime m
      , Show idx
@@ -330,7 +329,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
     loop :: Int -> m Bool
     loop limit = do
-      (batch, batchSize) <- reserveJobs limit
+      batch <- reserveJobs limit
+      let batchSize = length batch
       when (batchSize > 0) $ do
         logInfo "Processing batch" $
           object
@@ -349,7 +349,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             . (`finally` subtractJobs)
             . restore
             $ do
-              mapM startJob (catMaybes batch) >>= mapM joinJob >>= updateJobs
+              mapM startJob batch >>= mapM joinJob >>= updateJobs
 
         when (batchSize == limit) $ do
           maxBatchSize <- atomically $ do
@@ -360,7 +360,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([Maybe job], Int)
+    reserveJobs :: Int -> m [job]
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       runPreparedSQL_ (preparedSqlName "getReservedIds" ccJobsTable) $
@@ -376,45 +376,43 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
           ]
       jobIds :: [idx] <- fetchMany runIdentity
       if null jobIds
-        then pure ([], 0)
+        then pure []
         else
           handle
             ( \(SomeException e) -> do
-                logAttention "Failure to fetch the jobs, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_ids" .= show jobIds]
-                let toUpdate :: [(idx, Result)]
-                    toUpdate = (,Failed . RerunAfter . ihours $ 6) <$> jobIds
+                logAttention "Failure to fetch the jobs, will reenqueue for the next day" $ object ["error" .= show e, "job_ids" .= show jobIds]
                 rollback
-                lift $ updateJobs toUpdate
-                commit
-                pure ([], 0)
+                lift $ fetchFailureHandler jobIds
+                pure []
             )
             ( do
-                n <-
-                  runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-                    smconcat
-                      [ "UPDATE" <+> raw ccJobsTable <+> "SET"
-                      , "  reserved_by =" <?> cid
-                      , ", attempts = CASE"
-                      , "    WHEN finished_at IS NULL THEN attempts + 1"
-                      , "    ELSE 1"
-                      , "  END"
-                      , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
-                      , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
-                      ]
+                runPreparedSQL_ (preparedSqlName "setReservation" ccJobsTable) $
+                  smconcat
+                    [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+                    , "  reserved_by =" <?> cid
+                    , ", attempts = CASE"
+                    , "    WHEN finished_at IS NULL THEN attempts + 1"
+                    , "    ELSE 1"
+                    , "  END"
+                    , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
+                    , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
+                    ]
                 qr <- queryResult
-                results <- forM (F.toList qr) $ \(jobIdRow :*: other) ->
-                  let jobId = runIdentity jobIdRow
-                  in handle
-                      ( \(SomeException e) -> do
-                          logAttention "Failure to fetch job, will reenqueue for 6 hours later" $ object ["error" .= show e, "job_id" .= show jobId]
-                          rollback
-                          lift $ updateJobs [(jobId, Failed . RerunAfter . ihours $ 6)]
-                          commit
-                          pure Nothing
-                      )
-                      (liftBase . evaluate $ Just $! ccJobFetcher other)
-                pure (results, n)
+                results <- forM (F.toList qr) $ \(rawJobId :*: other) -> do
+                  let jobId = runIdentity rawJobId
+                  (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(SomeException e) -> do
+                    logAttention "Failure to fetch job, will reenqueue for the next day" $ object ["error" .= show e, "job_id" .= show jobId]
+                    rollback
+                    lift $ fetchFailureHandler [jobId]
+                    pure Nothing
+                pure $ catMaybes results
             )
+
+    fetchFailureHandler :: [idx] -> m ()
+    fetchFailureHandler jobIds = do
+      let toUpdate :: [(idx, Result)]
+          toUpdate = (,Failed . RerunAfter . idays $ 1) <$> jobIds
+      updateJobs toUpdate
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
