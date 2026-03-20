@@ -1,1 +1,14 @@
 packages: */*.cabal
+
+-- for prometheus-client
+constraints: data-sketches < 0.4
+
+-- GHC 9.14.1
+allow-newer:
+  , *:base
+  , *:template-haskell
+  , aeson:containers
+  , aeson:indexed-traversable
+  , aeson:semialign
+  , aeson:time
+  , indexed-traversable:containers
