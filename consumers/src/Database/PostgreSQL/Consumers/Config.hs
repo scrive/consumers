@@ -2,16 +2,19 @@ module Database.PostgreSQL.Consumers.Config
   ( Action (..)
   , Result (..)
   , ConsumerConfig (..)
+  , defaultOnFailedToFetchJob
   ) where
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
+import Data.Text (Text)
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
 import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
 import Database.PostgreSQL.PQTypes.SQL.Raw
+import Log
 
 -- | Action to take after a job was processed.
 data Action
@@ -78,7 +81,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobSelectors :: ![SQL]
   -- ^ Fields needed to be selected from the jobs table in order to assemble a
   -- job.
-  , ccJobFetcher :: !(row -> job)
+  , ccJobFetcher :: !(row -> Either (idx, Text) job)
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
@@ -110,6 +113,12 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that processes a job. It's recommended to process each job in a
   -- separate DB transaction, otherwise you'll have to remember to commit your
   -- changes to the database manually.
+  , ccOnFailedToFetchJob :: !(Text -> idx -> m Action)
+  -- ^ Action taken if fetching a job failed. It is advised to reenqueue the
+  -- job at a later date and emit a warning in such a case. This is mostly
+  -- to ensure the application using consumers won't fail completely when
+  -- this happens. See 'defaultOnFailedToFetchJob' for a simple implementation
+  -- which logs and reenqueue.
   , ccOnException :: !(SomeException -> job -> m Action)
   -- ^ Action taken if a job processing function throws an exception. For
   -- robustness it's best to ensure that it doesn't throw. If it does, the
@@ -117,3 +126,11 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobLogData :: !(job -> [A.Pair])
   -- ^ Data to attach to each log message while processing a job.
   }
+
+-- | A default implementation for ccOnFailedToFetchJob,
+-- when the parsing of the row should never fail.
+-- This will create a logAttention and reenqueue, to be replayed in one day.
+defaultOnFailedToFetchJob :: (MonadLog m, Show idx) => Text -> idx -> m Action
+defaultOnFailedToFetchJob msg idx = do
+  logAttention "Unexpected unparseable job" $ A.object ["error" A..= msg, "consumers_job_id" A..= show idx]
+  pure . RerunAfter $ idays 1

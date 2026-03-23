@@ -1,3 +1,6 @@
+# consumers-2.4.0.0 (TBD)
+* Add ability to reenqueue unfetchable jobs, let ccJobFetcher fail
+
 # consumers-2.3.4.0 (2025-11-27)
 * Compatibility with `hpqtypes` >= 1.13.0.0.
 
