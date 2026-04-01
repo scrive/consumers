@@ -216,10 +216,34 @@ test = do
     simulatingFailure _ = error "Simulating row fetch error"
 
     consumerFailingSingleJobConfig =
-      consumerConfig {ccJobFetcher = simulatingFailure}
+      ConsumerConfig
+        { ccJobsTable = "consumers_test_jobs"
+        , ccConsumersTable = "consumers_test_consumers"
+        , ccJobSelectors = ["id", "countdown"]
+        , ccJobFetcher = simulatingFailure
+        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccNotificationChannel = Just "consumers_test_chan"
+        , ccNotificationTimeout = 100 * 1000
+        , ccMaxRunningJobs = 20
+        , ccProcessJob = processJob
+        , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        }
 
     consumerFailingAllJobsConfig =
-      consumerConfig {ccJobSelectors = ["id", "countdown::bigint"]}
+      ConsumerConfig
+        { ccJobsTable = "consumers_test_jobs"
+        , ccConsumersTable = "consumers_test_consumers"
+        , ccJobSelectors = ["id", "countdown::bigint"]
+        , ccJobFetcher = id
+        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccNotificationChannel = Just "consumers_test_chan"
+        , ccNotificationTimeout = 100 * 1000
+        , ccMaxRunningJobs = 20
+        , ccProcessJob = processJob
+        , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        }
 
     putJob :: Int32 -> TestEnv ()
     putJob countdown = localDomain "put" $ do
