@@ -103,6 +103,55 @@ test = do
       rowcount1 :: Int64 <- fetchOne runIdentity
       liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
+
+      -- Checking the failing mechanism for a single job.
+      putJob 1 >> commit
+      do
+        -- Move time forward again, since we enqueued new jobs.
+        modifyTestTime $ addUTCTime (2 * 60 * 60)
+        finalize
+          ( localDomain "process" $
+              runConsumerWithIdleSignal consumerFailingSingleJobConfig connSource idleSignal
+          )
+          $ do
+            waitUntilTrue idleSignal
+        currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
+
+      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
+      rowcount2 :: Int64 <- fetchOne runIdentity
+      runSQL_ "SELECT run_at from consumers_test_jobs"
+      newRunTime :: UTCTime <- fetchOne runIdentity
+      liftIO $ do
+        T.assertEqual "The failed job should still be in the table" 1 rowcount2
+      areInSixHours [newRunTime]
+      -- Clean up.
+      runSQL_ "DELETE FROM consumers_test_jobs;"
+
+      -- Checking the failing mechanism for multiple jobs
+      let nbOfJobsToFail = 5
+      replicateM_ nbOfJobsToFail (putJob 1) >> commit
+      do
+        -- Move time forward again, since we enqueued new jobs.
+        modifyTestTime $ addUTCTime (2 * 60 * 60)
+        -- Jobs get processed one at a time, so we need to run this as many times as there are jobs
+        replicateM_ nbOfJobsToFail $ do
+          finalize
+            ( localDomain "process" $
+                runConsumerWithIdleSignal consumerFailingAllJobsConfig connSource idleSignal
+            )
+            $ do
+              waitUntilTrue idleSignal
+        currentTime >>= (logInfo_ . T.pack . ("current time: " ++) . show)
+
+      runSQL_ "SELECT run_at from consumers_test_jobs"
+      newRunTimes :: [UTCTime] <- fetchMany runIdentity
+      liftIO $ do
+        T.assertEqual "All jobs should fail if the query to fetch them is wrong" 5 (length newRunTimes)
+      areInSixHours newRunTimes
+      -- Clean up.
+      runSQL_ "DELETE FROM consumers_test_jobs"
+
+      -- All done.
       dropTables
   where
     waitUntilTrue tmvar = liftIO . atomically $ do
@@ -113,6 +162,13 @@ test = do
     printUsage = do
       prog <- getProgName
       putStrLn $ "Usage: " <> prog <> " <connection info string>"
+
+    areInSixHours toCheck = do
+      let inXHours n = addUTCTime (60 * 60 * n) <$> currentTime
+      in5Hours <- inXHours 5
+      in7Hours <- inXHours 7
+      liftIO . T.assertBool "The failed jobs should be planned to run more than 5 hours later" $ all (in5Hours <) toCheck
+      liftIO . T.assertBool "The failed jobs should be planned to run less than 7 hours later" $ all (in7Hours >) toCheck
 
     definitions = emptyDbDefinitions {dbTables = [consumersTable, jobsTable]}
     -- NB: order of migrations is important.
@@ -150,6 +206,39 @@ test = do
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
+        , ccMaxRunningJobs = 20
+        , ccProcessJob = processJob
+        , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        }
+
+    simulatingFailure :: (Int64, Int32) -> (Int64, Int32)
+    simulatingFailure _ = error "Simulating row fetch error"
+
+    consumerFailingSingleJobConfig =
+      ConsumerConfig
+        { ccJobsTable = "consumers_test_jobs"
+        , ccConsumersTable = "consumers_test_consumers"
+        , ccJobSelectors = ["id", "countdown"]
+        , ccJobFetcher = simulatingFailure
+        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccNotificationChannel = Just "consumers_test_chan"
+        , ccNotificationTimeout = 100 * 1000
+        , ccMaxRunningJobs = 20
+        , ccProcessJob = processJob
+        , ccOnException = handleException
+        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        }
+
+    consumerFailingAllJobsConfig =
+      ConsumerConfig
+        { ccJobsTable = "consumers_test_jobs"
+        , ccConsumersTable = "consumers_test_consumers"
+        , ccJobSelectors = ["id", "countdown::bigint"]
+        , ccJobFetcher = id
+        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccNotificationChannel = Just "consumers_test_chan"
+        , ccNotificationTimeout = 100 * 1000
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException

@@ -10,7 +10,7 @@ import Control.Concurrent.Lifted
 import Control.Concurrent.STM hiding (atomically)
 import Control.Concurrent.STM qualified as STM
 import Control.Concurrent.Thread.Lifted qualified as T
-import Control.Exception (AsyncException (ThreadKilled))
+import Control.Exception (AsyncException (ThreadKilled), evaluate)
 import Control.Exception.Safe qualified as ES
 import Control.Monad
 import Control.Monad.Base
@@ -22,6 +22,7 @@ import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
 import Data.Map.Strict qualified as M
+import Data.Maybe (catMaybes)
 import Data.Monoid.Utils
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.Consumers.Consumer
@@ -301,6 +302,7 @@ spawnDispatcher
      , MonadTime m
      , Show idx
      , ToSQL idx
+     , FromSQL idx
      )
   => ConsumerConfig m idx job
   -> ConnectionSourceM m
@@ -327,7 +329,8 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
     loop :: Int -> m Bool
     loop limit = do
-      (batch, batchSize) <- reserveJobs limit
+      batch <- reserveJobs limit
+      let batchSize = length batch
       when (batchSize > 0) $ do
         logInfo "Processing batch" $
           object
@@ -357,36 +360,59 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([job], Int)
+    reserveJobs :: Int -> m [job]
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
-      n <-
-        runPreparedSQL (preparedSqlName "setReservation" ccJobsTable) $
-          smconcat
-            [ "UPDATE" <+> raw ccJobsTable <+> "SET"
-            , "  reserved_by =" <?> cid
-            , ", attempts = CASE"
-            , "    WHEN finished_at IS NULL THEN attempts + 1"
-            , "    ELSE 1"
-            , "  END"
-            , "WHERE id IN (" <> reservedJobs now <> ")"
-            , "RETURNING" <+> mintercalate ", " ccJobSelectors
-            ]
-      -- Decode lazily as we want the transaction to be as short as possible.
-      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
-      where
-        reservedJobs :: UTCTime -> SQL
-        reservedJobs now =
-          smconcat
-            [ "SELECT id FROM" <+> raw ccJobsTable
-            , "WHERE"
-            , "       reserved_by IS NULL"
-            , "       AND run_at IS NOT NULL"
-            , "       AND run_at <= " <?> now
-            , "       ORDER BY run_at"
-            , "LIMIT" <?> limit
-            , "FOR UPDATE SKIP LOCKED"
-            ]
+      runPreparedSQL_ (preparedSqlName "getReservedIds" ccJobsTable) $
+        smconcat
+          [ "SELECT id FROM" <+> raw ccJobsTable
+          , "WHERE"
+          , "       reserved_by IS NULL"
+          , "       AND run_at IS NOT NULL"
+          , "       AND run_at <= " <?> now
+          , "       ORDER BY run_at"
+          , "LIMIT" <?> limit
+          , "FOR UPDATE SKIP LOCKED"
+          ]
+      jobIds :: [idx] <- fetchMany runIdentity
+      if null jobIds
+        then pure []
+        else
+          handle
+            ( \(SomeException e) -> do
+                logAttention "Failure to fetch the jobs, will reenqueue for the next day" $ object ["error" .= show e, "job_ids" .= show jobIds]
+                rollback
+                lift $ fetchFailureHandler jobIds
+                pure []
+            )
+            ( do
+                runPreparedSQL_ (preparedSqlName "setReservation" ccJobsTable) $
+                  smconcat
+                    [ "UPDATE" <+> raw ccJobsTable <+> "SET"
+                    , "  reserved_by =" <?> cid
+                    , ", attempts = CASE"
+                    , "    WHEN finished_at IS NULL THEN attempts + 1"
+                    , "    ELSE 1"
+                    , "  END"
+                    , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
+                    , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
+                    ]
+                qr <- queryResult
+                results <- forM (F.toList qr) $ \(rawJobId :*: other) -> do
+                  let jobId = runIdentity rawJobId
+                  (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(SomeException e) -> do
+                    logAttention "Failure to fetch job, will reenqueue for the next day" $ object ["error" .= show e, "job_id" .= show jobId]
+                    rollback
+                    lift $ fetchFailureHandler [jobId]
+                    pure Nothing
+                pure $ catMaybes results
+            )
+
+    fetchFailureHandler :: [idx] -> m ()
+    fetchFailureHandler jobIds = do
+      let toUpdate :: [(idx, Result)]
+          toUpdate = (,Failed . RerunAfter . idays $ 1) <$> jobIds
+      updateJobs toUpdate
 
     -- Spawn each job in a separate thread.
     startJob :: job -> m (job, m (T.Result Result))
