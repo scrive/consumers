@@ -377,13 +377,13 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
       jobIds :: [idx] <- fetchMany runIdentity
       if null jobIds
         then pure []
-        else
+        else do
           handle
             ( \(DBException _ _ e _) -> do
                 logAttention "Failure to fetch the jobs, will reenqueue for the next day" $ object ["error" .= show e, "job_ids" .= show jobIds]
                 rollback
                 lift $ fetchFailureHandler jobIds
-                pure []
+                pure ()
             )
             ( do
                 runPreparedSQL_ (preparedSqlName "setReservation" ccJobsTable) $
@@ -397,16 +397,16 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                     , "WHERE id = ANY(" <?> Array1 jobIds <+> ")"
                     , "RETURNING id, " <+> mintercalate ", " ccJobSelectors
                     ]
-                qr <- queryResult
-                results <- forM (F.toList qr) $ \(rawJobId :*: other) -> do
-                  let jobId = runIdentity rawJobId
-                  (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(DBException _ _ e _) -> do
-                    logAttention "Failure to fetch job, will reenqueue for the next day" $ object ["error" .= show e, "job_id" .= show jobId]
-                    rollback
-                    lift $ fetchFailureHandler [jobId]
-                    pure Nothing
-                pure $ catMaybes results
             )
+          qr <- queryResult
+          results <- forM (F.toList qr) $ \(rawJobId :*: other) -> do
+            let jobId = runIdentity rawJobId
+            (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(DBException _ _ e _) -> do
+              logAttention "Failure to fetch job, will reenqueue for the next day" $ object ["error" .= show e, "job_id" .= show jobId]
+              rollback
+              lift $ fetchFailureHandler [jobId]
+              pure Nothing
+          pure $ catMaybes results
 
     fetchFailureHandler :: [idx] -> m ()
     fetchFailureHandler jobIds = do
