@@ -379,7 +379,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
         then pure []
         else
           handle
-            ( \(SomeException e) -> do
+            ( \(DBException _ _ e _) -> do
                 logAttention "Failure to fetch the jobs, will reenqueue for the next day" $ object ["error" .= show e, "job_ids" .= show jobIds]
                 rollback
                 lift $ fetchFailureHandler jobIds
@@ -400,7 +400,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
                 qr <- queryResult
                 results <- forM (F.toList qr) $ \(rawJobId :*: other) -> do
                   let jobId = runIdentity rawJobId
-                  (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(SomeException e) -> do
+                  (Just <$> liftBase (evaluate $ ccJobFetcher other)) `catch` \(DBException _ _ e _) -> do
                     logAttention "Failure to fetch job, will reenqueue for the next day" $ object ["error" .= show e, "job_id" .= show jobId]
                     rollback
                     lift $ fetchFailureHandler [jobId]
