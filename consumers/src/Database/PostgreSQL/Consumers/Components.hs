@@ -127,7 +127,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
         { ccOnException = \ex job -> localData (ccJobLogData cc0 job) $ do
             let doOnException = do
                   action <- ccOnException cc0 ex job
-                  logInfo "Unexpected exception caught while processing job" $
+                  logAttention "Unexpected exception caught while processing job" $
                     object
                       [ "exception" .= show ex
                       , "action" .= show action
