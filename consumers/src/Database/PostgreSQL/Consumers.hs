@@ -7,18 +7,18 @@
 --
 -- The two things you actually need are:
 --
--- * 'ConsumerConfig' (from "Database.PostgreSQL.Consumers.Config") — describes
+-- * 'ConsumerConfig' (from "Database.PostgreSQL.Consumers.Config"): describes
 --   your jobs table, how to deserialize a job, and what to do with one.
--- * 'runConsumer' — starts the consumer's daemon threads and returns a
+-- * 'runConsumer': starts the consumer's daemon threads and returns a
 --   finalizer you run at shutdown (typically via 'finalize').
 --
 -- Re-exported submodules:
 --
--- * "Database.PostgreSQL.Consumers.Config" — 'ConsumerConfig', 'Action',
+-- * "Database.PostgreSQL.Consumers.Config": 'ConsumerConfig', 'Action',
 --   'Result'.
--- * "Database.PostgreSQL.Consumers.Utils" — supporting machinery: the
---   'finalize' bracket and the 'StopExecution' / 'ThrownFrom' exceptions used
---   by the consumer's internal threads.
+-- * "Database.PostgreSQL.Consumers.Utils": supporting machinery, including
+--   the 'finalize' bracket and the 'StopExecution' / 'ThrownFrom' exceptions
+--   used by the consumer's internal threads.
 --
 -- See the package README for an architectural overview and a job-lifecycle
 -- diagram.

@@ -4,7 +4,7 @@
 -- runtime: it names the jobs table and the consumer-registry table, says how
 -- to deserialize a job, and provides the handler ('ccProcessJob') plus its
 -- exception fallback ('ccOnException'). Each invocation of 'ccProcessJob' is
--- expected to run in its own database transaction and to be idempotent — a
+-- expected to run in its own database transaction and to be idempotent: a
 -- crashed consumer's job will be reclaimed by the monitor on another consumer
 -- and retried, so a partial side effect must be safe to re-apply.
 --
@@ -43,7 +43,7 @@ data Action
 
 -- | Result of processing a job. 'Ok' and 'Failed' both carry an 'Action' and
 -- mutate the row in the same way; the distinction is a signal for logging and
--- metrics — typically you'd use @'Failed' ('RerunAfter' n)@ to indicate that
+-- metrics. Typically you'd use @'Failed' ('RerunAfter' n)@ to indicate that
 -- the job was retried due to a recoverable error rather than completing
 -- normally.
 data Result = Ok Action | Failed Action

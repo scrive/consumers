@@ -3,15 +3,15 @@
 -- Each call to 'runConsumer' forks three long-running threads inside the
 -- caller's process:
 --
--- * __Listener__ — waits on the configured @LISTEN@/@NOTIFY@ channel (if any)
+-- * __Listener__: waits on the configured @LISTEN@/@NOTIFY@ channel (if any)
 --   and on a 'ccNotificationTimeout' timer, and signals the dispatcher
 --   whenever it's time to look for due jobs.
--- * __Monitor__ — every 30 seconds, updates this consumer's @last_activity@
+-- * __Monitor__: every 30 seconds, updates this consumer's @last_activity@
 --   in the consumers table as a heartbeat, then scans for peer consumers
 --   whose heartbeat is more than 60 seconds stale. Any jobs reserved by such
 --   a peer are released (with 'ccOnException' applied so retry policy still
 --   runs) and the dead consumer row is deleted.
--- * __Dispatcher__ — reserves due jobs with
+-- * __Dispatcher__: reserves due jobs with
 --   @SELECT … FOR UPDATE SKIP LOCKED@, setting @reserved_by@ and incrementing
 --   @attempts@, then forks one worker per reserved job up to
 --   'ccMaxRunningJobs'. Each worker runs 'ccProcessJob' in its own

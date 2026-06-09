@@ -2,14 +2,14 @@
 --
 -- The pieces here are useful to consumer callers too:
 --
--- * 'finalize' — bracket pattern that pairs an action returning a finalizer
+-- * 'finalize': bracket pattern that pairs an action returning a finalizer
 --   (such as 'Database.PostgreSQL.Consumers.runConsumer') with a body, and
 --   runs the finalizer when the body completes or throws.
--- * 'StopExecution' / 'ThrownFrom' — the async-exception protocol used by the
+-- * 'StopExecution' / 'ThrownFrom': the async-exception protocol used by the
 --   consumer's daemon threads. 'StopExecution' is a graceful stop signal;
 --   any other exception in a child thread is wrapped in 'ThrownFrom' and
 --   re-thrown in the parent.
--- * 'forkP' / 'gforkP' — fork variants that propagate child exceptions to
+-- * 'forkP' / 'gforkP': fork variants that propagate child exceptions to
 --   the parent thread using the protocol above.
 module Database.PostgreSQL.Consumers.Utils
   ( finalize
