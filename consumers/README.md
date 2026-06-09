@@ -87,9 +87,9 @@ Each call to `runConsumer` spawns three daemon threads inside your process:
                  │      │             ▼       ▼                    ▼        │
                  │  Monitor       SELECT … FOR UPDATE         ccProcessJob  │
                  │      │         SKIP LOCKED;  UPDATE             │        │
-                 └──────┼──────────────┼──────────────────────────┼────────┘
-                        │              │                          │
-                        ▼              ▼                          ▼
+                 └──────┼──────────────┼───────────────────────────┼────────┘
+                        │              │                           │
+                        ▼              ▼                           ▼
                   ┌───────────────────────────────────────────────────────┐
                   │                     PostgreSQL                        │
                   │   consumers table   ◄────►   jobs table               │
@@ -117,34 +117,34 @@ status enum — the combination of those columns is the state.
                     │
                     ▼
               ┌──────────┐   run_at ≤ NOW()    ┌──────────┐
-              │  Queued  │ ──────────────────► │  Ready   │ ◄──┐
-              └──────────┘                     └────┬─────┘    │
-                                                    │          │
-                                  Dispatcher reserves          │
-                                  reserved_by := me            │
-                                  attempts    += 1             │
-                                                    │          │
-                                                    ▼          │
-                                              ┌──────────┐     │
-                                              │ Reserved │     │
-                                              └────┬─────┘     │
-                                                    │          │
-                                              ccProcessJob     │
-                                                    │          │
-                       ┌────────────────────────────┼────────────────────────────┐
-                       │                            │                            │
-                Ok MarkProcessed           Ok/Failed RerunAfter             Ok/Failed Remove
-                Ok Remove                  Ok/Failed RerunAt                (or Ok MarkProcessed)
-                       │                            │                            │
-                       ▼                            ▼                            ▼
-                 ┌───────────┐                ┌─────────────┐               ┌──────────┐
-                 │ Completed │                │ Rescheduled │               │ Removed  │
-                 └───────────┘                └─────────────┘               └──────────┘
-
-   If the consumer dies mid-processing the row sits in the Stuck state until the
-   Monitor on another consumer notices and reclaims it (ccOnException is applied,
-   reserved_by is cleared, and the job returns to Ready).
+              │  Queued  │ ──────────────────► │  Ready   │ ◄─┐
+              └──────────┘                     └────┬─────┘   │
+                                                    │         │
+                                  Dispatcher reserves         │
+                                  reserved_by := me           │
+                                  attempts    += 1            │
+                                                    │         │
+                                                    ▼         │
+                                              ┌──────────┐    │
+                                              │ Reserved │    │
+                                              └────┬─────┘    │
+                                                   │          │
+                                             ccProcessJob     │
+                                                   │          │
+                      ┌────────────────────────────┼────────────────────────────┐
+                      │                            │                            │
+               Ok MarkProcessed           Ok/Failed RerunAfter             Ok/Failed Remove
+               Ok Remove                  Ok/Failed RerunAt                (or Ok MarkProcessed)
+                      │                            │                            │
+                      ▼                            ▼                            ▼
+                ┌───────────┐                ┌─────────────┐               ┌──────────┐
+                │ Completed │                │ Rescheduled │               │ Removed  │
+                └───────────┘                └─────────────┘               └──────────┘
 ```
+
+If the consumer dies mid-processing the row sits in the Stuck state until the
+Monitor on another consumer notices and reclaims it (`ccOnException` is
+applied, `reserved_by` is cleared, and the job returns to Ready).
 
 ## Schema requirements
 
@@ -201,10 +201,3 @@ correlation data. For Prometheus metrics, drop in
 [`consumers-metrics-prometheus`](https://hackage.haskell.org/package/consumers-metrics-prometheus),
 which wraps `runConsumer` and exposes histograms and gauges for running,
 overdue, and processed jobs without any changes to your consumer code.
-
-## Links
-
-- [Hackage](https://hackage.haskell.org/package/consumers)
-- [CHANGELOG](CHANGELOG.md)
-- [Example](example/Example.hs)
-- [License (BSD-3)](LICENSE)
