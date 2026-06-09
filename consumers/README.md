@@ -149,53 +149,6 @@ If the consumer dies mid-processing the row sits in the Stuck state until the
 Monitor on another consumer notices and reclaims it (`ccOnException` is
 applied, `reserved_by` is cleared, and the job returns to Ready).
 
-## Schema requirements
-
-The required columns and their constraints are documented in detail in the
-Haddock for `ccJobsTable` and `ccConsumersTable`. In short:
-
-- **jobs table:** `id` (PK), `run_at` (nullable timestamptz; NULL ⇒ never
-  run), `finished_at` (nullable timestamptz), `reserved_by` (nullable, FK to
-  the registry table; `ON DELETE SET NULL` recommended), `attempts` (integer,
-  default 0), plus your own payload columns. An index on `run_at` is strongly
-  recommended.
-- **consumers table:** `id` (`BIGSERIAL` PK), `name` (text, the jobs-table
-  name, which lets one registry table cover many queues), `last_activity`
-  (timestamptz).
-
-## Retry and failure handling
-
-When `ccProcessJob` returns, the wrapping `Result` decides what happens next:
-
-- `Ok MarkProcessed`: clears `run_at`, sets `finished_at`. The row stays
-  around for auditing.
-- `Ok Remove` / `Failed Remove`: deletes the row.
-- `Ok (RerunAfter n)` / `Failed (RerunAfter n)`: sets `run_at = NOW() + n`.
-- `Ok (RerunAt t)` / `Failed (RerunAt t)`: sets `run_at = t`.
-
-If `ccProcessJob` throws, `ccOnException` is called with the exception and the
-job and returns an `Action` directly. The library does not impose an
-exponential backoff: read the current `attempts` count off the job and
-compute whatever schedule you want. If `ccOnException` itself throws, the job
-is postponed by a day and the exception is logged.
-
-`attempts` is incremented every time the Dispatcher reserves the row, so it
-reflects the number of processing attempts so far (including the one currently
-running).
-
-## Concurrency and latency tuning
-
-- `ccMaxRunningJobs`: upper bound on per-consumer parallelism. Multiple
-  consumer processes scale horizontally; `SKIP LOCKED` ensures they never
-  contend.
-- `ccNotificationChannel`: `Just chan` enables `LISTEN`/`NOTIFY` for
-  sub-second wake-up. `NOTIFY` only fires on commit, so it composes naturally
-  with transactional enqueue.
-- `ccNotificationTimeout`: microseconds between forced polls. Required even
-  when `LISTEN`/`NOTIFY` is enabled if your jobs can be retried in the future,
-  because `NOTIFY` cannot announce "this job will become due in 5 minutes". If
-  your jobs are never retried, set it to `-1` to disable polling entirely.
-
 ## Observability
 
 `ccJobLogData` attaches a list of structured fields to every log line emitted
