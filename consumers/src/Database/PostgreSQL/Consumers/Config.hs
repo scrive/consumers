@@ -2,6 +2,7 @@ module Database.PostgreSQL.Consumers.Config
   ( Action (..)
   , Result (..)
   , ConsumerConfig (..)
+  , mapConsumer
   ) where
 
 import Control.Exception (SomeException)
@@ -117,3 +118,15 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobLogData :: !(job -> [A.Pair])
   -- ^ Data to attach to each log message while processing a job.
   }
+
+-- | Map the consumer to operate in a different monad.
+mapConsumer
+  :: (forall r. m r -> n r)
+  -> ConsumerConfig m idx job
+  -> ConsumerConfig n idx job
+mapConsumer f ConsumerConfig {..} =
+  ConsumerConfig
+    { ccProcessJob = f . ccProcessJob
+    , ccOnException = \ex -> f . ccOnException ex
+    , ..
+    }
