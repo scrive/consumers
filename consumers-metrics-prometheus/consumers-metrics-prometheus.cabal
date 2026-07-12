@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers-metrics-prometheus
-version:            1.0.0.0
+version:            2.0.0.0
 synopsis:           Prometheus metrics for the consumers library
 
 description:        Provides seamless instrumentation of your existing
@@ -16,7 +16,7 @@ maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
-tested-with:        GHC == { 9.2.8, 9.4.8, 9.6.7, 9.8.4, 9.10.3, 9.12.2, 9.14.1 }
+tested-with:        GHC == { 9.6.7, 9.8.4, 9.10.3, 9.12.4, 9.14.1 }
 
 bug-reports:   https://github.com/scrive/consumers/issues
 source-repository head
@@ -42,10 +42,10 @@ library
 
   exposed-modules:  Database.PostgreSQL.Consumers.Instrumented
 
-  build-depends:    base              >= 4.16   && < 5
-                  , consumers         >= 2.3
+  build-depends:    base              >= 4.18   && < 5
+                  , consumers         >= 3.0
                   , exceptions        >= 0.10
-                  , hpqtypes          >= 1.13
+                  , hpqtypes          >= 2.0
                   , lifted-base       >= 0.2
                   , log-base          >= 0.11
                   , monad-control     >= 1.0

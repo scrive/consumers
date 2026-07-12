@@ -8,7 +8,7 @@ module Database.PostgreSQL.Consumers.Config
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
 import Data.Time
-import Database.PostgreSQL.PQTypes.FromRow
+import Database.PostgreSQL.PQTypes.FromSQL
 import Database.PostgreSQL.PQTypes.Interval
 import Database.PostgreSQL.PQTypes.Notification
 import Database.PostgreSQL.PQTypes.SQL
@@ -27,7 +27,7 @@ data Result = Ok Action | Failed Action
   deriving (Eq, Ord, Show)
 
 -- | Config of a consumer.
-data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
+data ConsumerConfig m idx job = ConsumerConfig
   { ccJobsTable :: !(RawSQL ())
   -- ^ Name of the database table where jobs are stored. The table needs to have
   -- the following columns in order to be suitable for acting as a job queue:
@@ -79,8 +79,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobSelectors :: ![SQL]
   -- ^ Fields needed to be selected from the jobs table in order to assemble a
   -- job.
-  , ccJobFetcher :: !(row -> job)
-  -- ^ Function that transforms the list of fields into a job.
+  , ccJobFetcher :: !(RowDecoder job)
+  -- ^ Decoder that transforms the selected fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
   , ccNotificationChannel :: !(Maybe Channel)

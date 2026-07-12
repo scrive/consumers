@@ -89,7 +89,7 @@ test = do
 
       -- Each job creates 2 new jobs, so there should be 1024 jobs in table.
       runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
-      rowcount0 :: Int64 <- fetchOne runIdentity
+      rowcount0 :: Int64 <- fetchOne fromSQL
       -- Move time 2 hours forward
       modifyTestTime $ addUTCTime (2 * 60 * 60)
       finalize
@@ -100,7 +100,7 @@ test = do
           waitUntilTrue idleSignal
       -- Jobs are designed to double only 10 times, so there should be no jobs left now.
       runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
-      rowcount1 :: Int64 <- fetchOne runIdentity
+      rowcount1 :: Int64 <- fetchOne fromSQL
       liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
       dropTables
@@ -145,7 +145,7 @@ test = do
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
         , ccJobSelectors = ["id", "countdown"]
-        , ccJobFetcher = id
+        , ccJobFetcher = (,) <$> fromSQL <*> fromSQL
         , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
