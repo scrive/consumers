@@ -213,7 +213,7 @@ collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccCo
       "SELECT count(id)::float8 FROM "
         <> raw ccConsumersTable
         <> " WHERE name =" <?> unRawSQL ccJobsTable
-    fetchOne runIdentity
+    fetchOne fromSQL
   liftBase $ Prom.withLabel jobInfo jobName (`Prom.setGauge` info)
 
   overdue <- do
@@ -221,7 +221,7 @@ collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccCo
       "SELECT count(id)::float8 FROM "
         <> raw ccJobsTable
         <> " WHERE run_at <= now() AND reserved_by IS NULL"
-    fetchOne runIdentity
+    fetchOne fromSQL
   liftBase $ Prom.withLabel jobsOverdue jobName (`Prom.setGauge` overdue)
 
 -- | Alter a configuration to collect "job" metrics on 'ccProcessJob'

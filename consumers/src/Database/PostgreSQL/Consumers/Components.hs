@@ -18,7 +18,6 @@ import Control.Monad.Catch
 import Control.Monad.Time
 import Control.Monad.Trans
 import Control.Monad.Trans.Control
-import Data.Foldable qualified as F
 import Data.Function
 import Data.Int
 import Data.Map.Strict qualified as M
@@ -255,7 +254,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
         , "  AND name =" <?> unRawSQL ccJobsTable
         , "FOR UPDATE SKIP LOCKED"
         ]
-    fetchMany (runIdentity @Int64) >>= \case
+    fetchMany (fromSQL @Int64) >>= \case
       [] -> pure (0, [])
       inactive -> do
         -- Fetch all stuck jobs and run ccOnException on them to determine
@@ -265,7 +264,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
           smconcat
             [ "SELECT" <+> mintercalate ", " ccJobSelectors
             , "FROM" <+> raw ccJobsTable
-            , "WHERE reserved_by = ANY(" <?> Array1 inactive <+> ")"
+            , "WHERE reserved_by = ANY(" <?> inactive <+> ")"
             , "FOR UPDATE SKIP LOCKED"
             ]
         stuckJobs <- fetchMany ccJobFetcher
@@ -277,7 +276,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
         runPreparedSQL_ (preparedSqlName "removeInactive" ccConsumersTable) $
           smconcat
             [ "DELETE FROM" <+> raw ccConsumersTable
-            , "WHERE id = ANY(" <?> Array1 inactive <+> ")"
+            , "WHERE id = ANY(" <?> inactive <+> ")"
             ]
         pure (length inactive, map ccJobIndex stuckJobs)
   when (inactiveConsumers > 0) $ do
@@ -372,8 +371,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             , "WHERE id IN (" <> reservedJobs now <> ")"
             , "RETURNING" <+> mintercalate ", " ccJobSelectors
             ]
-      -- Decode lazily as we want the transaction to be as short as possible.
-      (,n) . F.toList . fmap ccJobFetcher <$> queryResult
+      (,n) <$> fetchMany ccJobFetcher
       where
         reservedJobs :: UTCTime -> SQL
         reservedJobs now =
@@ -433,7 +431,7 @@ updateJobsQuery jobsTable results now =
   smconcat
     [ "WITH removed AS ("
     , "  DELETE FROM" <+> raw jobsTable
-    , "  WHERE id = ANY(" <?> Array1 deletes <+> ")"
+    , "  WHERE id = ANY(" <?> deletes <+> ")"
     , ")"
     , "UPDATE" <+> raw jobsTable <+> "SET"
     , "  reserved_by = NULL"
@@ -443,16 +441,16 @@ updateJobsQuery jobsTable results now =
     , "    ELSE NULL" -- processed
     , "  END"
     , ", finished_at = CASE"
-    , "    WHEN id = ANY(" <?> Array1 successes <+> ") THEN " <?> now
+    , "    WHEN id = ANY(" <?> successes <+> ") THEN " <?> now
     , "    ELSE NULL"
     , "  END"
-    , "WHERE id = ANY(" <?> Array1 (map fst updates) <+> ")"
+    , "WHERE id = ANY(" <?> map fst updates <+> ")"
     ]
   where
     retryToSQL (Left int) ids =
-      ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN " <?> now <> " +" <?> int :)
+      ("WHEN id = ANY(" <?> ids <+> ") THEN " <?> now <> " +" <?> int :)
     retryToSQL (Right time) ids =
-      ("WHEN id = ANY(" <?> Array1 ids <+> ") THEN" <?> time :)
+      ("WHEN id = ANY(" <?> ids <+> ") THEN" <?> time :)
 
     retries = foldr (step . getAction) M.empty updates
       where

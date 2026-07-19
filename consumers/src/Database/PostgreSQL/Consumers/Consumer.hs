@@ -15,16 +15,7 @@ import Database.PostgreSQL.PQTypes
 
 -- | ID of a consumer.
 newtype ConsumerID = ConsumerID Int64
-  deriving (Eq, Ord)
-
-instance PQFormat ConsumerID where
-  pqFormat = pqFormat @Int64
-instance FromSQL ConsumerID where
-  type PQBase ConsumerID = PQBase Int64
-  fromSQL mbase = ConsumerID <$> fromSQL mbase
-instance ToSQL ConsumerID where
-  type PQDest ConsumerID = PQDest Int64
-  toSQL (ConsumerID n) = toSQL n
+  deriving (Eq, Ord, PQFormat, FromSQL, ToSQL)
 
 instance Show ConsumerID where
   showsPrec p (ConsumerID n) = showsPrec p n
@@ -44,7 +35,7 @@ registerConsumer ConsumerConfig {..} cs = runDBT cs defaultTransactionSettings $
       , "(name, last_activity) VALUES (" <?> unRawSQL ccJobsTable <> ", " <?> now <> ")"
       , "RETURNING id"
       ]
-  fetchOne runIdentity
+  fetchOne fromSQL
 
 -- | Unregister consumer with a given ID.
 unregisterConsumer

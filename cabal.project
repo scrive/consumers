@@ -1,14 +1,11 @@
 packages: */*.cabal
 
--- for prometheus-client
-constraints: data-sketches < 0.4
+source-repository-package
+    type: git
+    location: https://github.com/scrive/hpqtypes
+    tag: a4785d18ff76ddb33d42d09d85d730cf6825ae39
 
--- GHC 9.14.1
-allow-newer:
-  , *:base
-  , *:template-haskell
-  , aeson:containers
-  , aeson:indexed-traversable
-  , aeson:semialign
-  , aeson:time
-  , indexed-traversable:containers
+source-repository-package
+    type: git
+    location: https://github.com/scrive/hpqtypes-extras
+    tag: 433ef681f8a42f34f171050a1c54f1457c95c824
