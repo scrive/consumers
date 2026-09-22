@@ -31,6 +31,8 @@ data ConsumerMetricsConfig = ConsumerMetricsConfig
   -- ^ Collection interval in seconds
   , jobExecutionBuckets :: [Prom.Bucket]
   -- ^ Buckets to use for the 'jobExecution' histogram
+  , jobFailedAttemptsBuckets :: [Prom.Bucket]
+  -- ^ Buckets to use for the 'jobsFailedAttempts' histogram
   , collectDegradeThresholdSeconds :: Double
   -- ^ @logAttention@ and graceful degrade if collection takes longer than @x@ seconds
   , collectDegradeSeconds :: Int
@@ -43,6 +45,7 @@ data ConsumerMetricsConfig = ConsumerMetricsConfig
 --  ConsumerMetricsConfig
 --    { collectSeconds = 15
 --    , jobExecutionBuckets = [0.01, 0.05, 0.1, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+--    , jobFailedAttemptsBuckets = [1, 2, 3, 5, 10, 20, 50]
 --    , collectDegradeThresholdSeconds = 0.1
 --    , collectDegradeSeconds = 60
 --    }
@@ -52,6 +55,7 @@ defaultConsumerMetricsConfig =
   ConsumerMetricsConfig
     { collectSeconds = 15
     , jobExecutionBuckets = [0.01, 0.05, 0.1, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+    , jobFailedAttemptsBuckets = [1, 2, 3, 5, 10, 20, 50]
     , collectDegradeThresholdSeconds = 0.1
     , collectDegradeSeconds = 60
     }
@@ -61,6 +65,9 @@ defaultConsumerMetricsConfig =
 -- @
 -- # HELP consumers_job_execution_seconds Execution time of jobs in seconds, by job_name, includes the job_result
 -- # TYPE consumers_job_execution_seconds histogram
+--
+-- # HELP consumers_job_failed_attempts Number of processing attempts made so far by jobs whose execution didn't succeed, by job_name
+-- # TYPE consumers_job_failed_attempts histogram
 --
 -- # HELP consumers_jobs_reserved_total The total number of job reserved, by job_name
 -- # TYPE consumers_jobs_reserved_total counter
@@ -79,6 +86,7 @@ data ConsumerMetrics = ConsumerMetrics
   , jobsOverdue :: Prom.Vector Prom.Label1 Prom.Gauge
   , jobsReserved :: Prom.Vector Prom.Label1 Prom.Counter
   , jobsExecution :: Prom.Vector Prom.Label2 Prom.Histogram
+  , jobsFailedAttempts :: Prom.Vector Prom.Label1 Prom.Histogram
   }
 
 registerConsumerMetrics :: MonadBaseControl IO m => ConsumerMetricsConfig -> m ConsumerMetrics
@@ -116,6 +124,15 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
           , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result"
           }
         jobExecutionBuckets
+  jobsFailedAttempts <-
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.histogram
+        Prom.Info
+          { metricName = "consumers_job_failed_attempts"
+          , metricHelp = "Number of processing attempts made so far by jobs whose execution didn't succeed, by job_name"
+          }
+        jobFailedAttemptsBuckets
   pure $ ConsumerMetrics {..}
 
 -- | Run a 'ConsumerConfig', but with instrumentation added.
@@ -250,9 +267,9 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
     -- result of the job).
     ccProcessJob' job = do
       handleAny handleEx . liftBase $ Prom.withLabel jobsReserved jobName Prom.incCounter
-      fst <$> generalBracket monotonicTime reportJob (const $ ccProcessJob job)
+      fst <$> generalBracket monotonicTime (reportJob job) (const $ ccProcessJob job)
 
-    reportJob t1 jobExit = handleAny handleEx $ do
+    reportJob job t1 jobExit = handleAny handleEx $ do
       t2 <- monotonicTime
       let duration = t2 - t1
           resultLabel = case jobExit of
@@ -261,5 +278,16 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
             ExitCaseException _ -> "exception"
             ExitCaseAbort -> "abort"
       liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
+      -- Only observe the attempt count for jobs that didn't succeed: for
+      -- 'Ok' results it carries no information (denoising one-off failures
+      -- from persistent retries is the whole point of this metric), and it
+      -- would otherwise dominate the histogram with a flood of "attempt 1"
+      -- observations.
+      case jobExit of
+        ExitCaseSuccess (Ok _) -> pure ()
+        _ ->
+          liftBase $
+            Prom.withLabel jobsFailedAttempts jobName $
+              (`Prom.observe` fromIntegral (ccJobAttempts job))
 
     handleEx e = logAttention "Exception while instrumenting job" $ object ["exception" .= show e]
