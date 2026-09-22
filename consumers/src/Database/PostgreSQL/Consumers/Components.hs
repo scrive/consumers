@@ -46,7 +46,7 @@ runConsumer
      , FromSQL idx
      , ToSQL idx
      )
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -- ^ The consumer.
   -> ConnectionSourceM m
   -> m (m ())
@@ -62,7 +62,7 @@ runConsumerWithIdleSignal
      , FromSQL idx
      , ToSQL idx
      )
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -- ^ The consumer.
   -> ConnectionSourceM m
   -> TMVar Bool
@@ -81,7 +81,7 @@ runConsumerWithMaybeIdleSignal
      , FromSQL idx
      , ToSQL idx
      )
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> Maybe (TMVar Bool)
   -> m (m ())
@@ -182,7 +182,7 @@ runConsumerWithMaybeIdleSignal cc0 cs mIdleSignal
 -- database for incoming jobs.
 spawnListener
   :: (MonadBaseControl IO m, MonadMask m)
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> MVar ()
   -> m ThreadId
@@ -211,7 +211,7 @@ spawnListener cc cs semaphore =
 -- | Spawn a thread that monitors working consumers for activity and
 -- periodically updates its own.
 spawnMonitor
-  :: forall m idx info
+  :: forall m idx job
    . ( MonadBaseControl IO m
      , MonadLog m
      , MonadMask m
@@ -220,7 +220,7 @@ spawnMonitor
      , FromSQL idx
      , ToSQL idx
      )
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
   -> m ThreadId
@@ -294,7 +294,7 @@ spawnMonitor ConsumerConfig {..} cs cid = forkP "monitor" . forever $ do
 
 -- | Spawn a thread that reserves and processes jobs.
 spawnDispatcher
-  :: forall m idx info
+  :: forall m idx job
    . ( MonadBaseControl IO m
      , MonadLog m
      , MonadMask m
@@ -302,7 +302,7 @@ spawnDispatcher
      , Show idx
      , ToSQL idx
      )
-  => ConsumerConfig m idx info
+  => ConsumerConfig m idx job
   -> ConnectionSourceM m
   -> ConsumerID
   -> MVar ()
@@ -357,7 +357,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
 
       pure (batchSize > 0)
 
-    reserveJobs :: Int -> m ([Job idx info], Int)
+    reserveJobs :: Int -> m ([job], Int)
     reserveJobs limit = runDBT cs ts $ do
       now <- currentTime
       n <-
@@ -389,7 +389,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
             ]
 
     -- Spawn each job in a separate thread.
-    startJob :: Job idx info -> m (Job idx info, m (T.Result Result))
+    startJob :: job -> m (job, m (T.Result Result))
     startJob job = do
       (_, joinFork) <- mask $ \restore -> T.fork $ do
         tid <- myThreadId
@@ -403,7 +403,7 @@ spawnDispatcher ConsumerConfig {..} cs cid semaphore runningJobsInfo runningJobs
           modifyTVar' runningJobsInfo $ M.delete tid
 
     -- Wait for all the jobs and collect their results.
-    joinJob :: (Job idx info, m (T.Result Result)) -> m (idx, Result)
+    joinJob :: (job, m (T.Result Result)) -> m (idx, Result)
     joinJob (job, joinFork) =
       joinFork >>= \case
         Right result -> pure (ccJobIndex job, result)

@@ -13,8 +13,8 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Int
 import Data.Text qualified as T
-import Data.Time (UTCTime)
 import Database.PostgreSQL.Consumers
+import Database.PostgreSQL.Consumers.RetryStrategy (exponentialBackoff)
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -102,23 +102,16 @@ main = do
       ConsumerConfig
         { ccJobsTable = "consumers_example_jobs"
         , ccConsumersTable = "consumers_example_consumers"
-        , ccJobSelectors = ["id", "run_at", "finished_at", "attempts", "message"]
-        , ccJobFetcher =
-            \(i :: Int64, runAt :: Maybe UTCTime, finishedAt :: Maybe UTCTime, attempts :: Int32, msg :: T.Text) ->
-              Job
-                { jobIndex = i
-                , jobRunAt = runAt
-                , jobFinishedAt = finishedAt
-                , jobAttempts = fromIntegral attempts
-                , jobInfo = msg
-                }
-        , ccJobIndex = jobIndex
+        , ccJobSelectors = ["id", "attempts", "message"]
+        , ccJobFetcher = id
+        , ccJobIndex = \(i :: Int64, _attempts :: Int32, _msg :: T.Text) -> i
+        , ccJobAttempts = \(_i, attempts :: Int32, _msg) -> fromIntegral attempts
         , ccNotificationChannel = Just "consumers_example_chan"
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \job -> ["job_id" .= jobIndex job]
+        , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
 
     -- Add a job to the consumer's queue.
@@ -133,16 +126,22 @@ main = do
       commit
 
     -- Invoked when a job is ready to be processed.
-    processJob :: Job Int64 T.Text -> AppM Result
-    processJob Job {jobInfo = msg} = do
+    processJob :: (Int64, Int32, T.Text) -> AppM Result
+    processJob (_idx, _attempts, msg) = do
       logInfo_ msg
       pure (Ok Remove)
 
     -- Invoked when 'processJob' throws an exception. Can handle
     -- failure in different ways, such as: remove the job from the
     -- queue, mark it as processed, or schedule it for rerun.
-    handleException :: SomeException -> Job Int64 T.Text -> AppM Action
-    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+    --
+    -- This uses 'exponentialBackoff' from
+    -- 'Database.PostgreSQL.Consumers.RetryStrategy': give up (remove the
+    -- job) after 5 attempts, otherwise retry with a delay that doubles each
+    -- time, capped at 10 seconds.
+    handleException :: SomeException -> (Int64, Int32, T.Text) -> AppM Action
+    handleException _ (_idx, attempts, _msg) =
+      pure $ exponentialBackoff 5 (imicroseconds 500000) (iseconds 10) (fromIntegral attempts)
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.
