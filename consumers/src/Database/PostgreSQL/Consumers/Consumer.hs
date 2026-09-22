@@ -33,7 +33,7 @@ instance Show ConsumerID where
 -- acquired ID.
 registerConsumer
   :: (MonadBase IO m, MonadMask m, MonadTime m)
-  => ConsumerConfig n idx job
+  => ConsumerConfig n idx info
   -> ConnectionSourceM m
   -> m ConsumerID
 registerConsumer ConsumerConfig {..} cs = runDBT cs defaultTransactionSettings $ do
@@ -49,7 +49,7 @@ registerConsumer ConsumerConfig {..} cs = runDBT cs defaultTransactionSettings $
 -- | Unregister consumer with a given ID.
 unregisterConsumer
   :: (MonadBase IO m, MonadMask m)
-  => ConsumerConfig n idx job
+  => ConsumerConfig n idx info
   -> ConnectionSourceM m
   -> ConsumerID
   -> m ()

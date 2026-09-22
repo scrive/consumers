@@ -144,16 +144,24 @@ test = do
       ConsumerConfig
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
-        , ccJobSelectors = ["id", "countdown"]
-        , ccJobFetcher = id
-        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccJobSelectors = ["id", "run_at", "finished_at", "attempts", "countdown"]
+        , ccJobFetcher =
+            \(i :: Int64, runAt :: Maybe UTCTime, finishedAt :: Maybe UTCTime, attempts :: Int32, countdown :: Int32) ->
+              Job
+                { jobIndex = i
+                , jobRunAt = runAt
+                , jobFinishedAt = finishedAt
+                , jobAttempts = fromIntegral attempts
+                , jobInfo = countdown
+                }
+        , ccJobIndex = jobIndex
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccJobLogData = \job -> ["job_id" .= jobIndex job]
         }
 
     putJob :: Int32 -> TestEnv ()
@@ -167,15 +175,15 @@ test = do
           <> ")"
       notify "consumers_test_chan" ""
 
-    processJob :: (Int64, Int32) -> TestEnv Result
-    processJob (_idx, countdown) = do
+    processJob :: Job Int64 Int32 -> TestEnv Result
+    processJob Job {jobInfo = countdown} = do
       when (countdown > 0) $ do
         putJob (countdown - 1)
         putJob (countdown - 1)
         commit
       pure (Ok Remove)
 
-    handleException :: SomeException -> (Int64, Int32) -> TestEnv Action
+    handleException :: SomeException -> Job Int64 Int32 -> TestEnv Action
     handleException _ _ = pure . RerunAfter $ imicroseconds 500000
 
 jobsTable :: Table

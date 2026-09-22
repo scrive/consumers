@@ -1,4 +1,13 @@
-# consumers-2.3.5.0 (2026-??-??)
+# consumers-2.4.0.0 (2026-??-??)
+* **Breaking:** `ConsumerConfig`'s job parameter is now always wrapped in the
+  new `Job` type, which exposes `jobIndex`, `jobRunAt`, `jobFinishedAt` and
+  `jobAttempts` (the queue bookkeeping columns) alongside the caller-supplied
+  payload as `jobInfo`. `ccJobFetcher`, `ccJobIndex`, `ccProcessJob`,
+  `ccOnException` and `ccJobLogData` all change shape accordingly; existing
+  consumers need to select `run_at`, `finished_at` and `attempts` in
+  `ccJobSelectors` and construct a `Job` in `ccJobFetcher`.
+* Add `exponentialBackoff`, a ready-made `ccOnException` handler built on
+  `jobAttempts`.
 * Add `hoistConsumer` to `Database.PostgreSQL.Consumers.Config`.
 
 # consumers-2.3.4.0 (2025-11-27)

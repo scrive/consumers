@@ -13,6 +13,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.Int
 import Data.Text qualified as T
+import Data.Time (UTCTime)
 import Database.PostgreSQL.Consumers
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
@@ -101,15 +102,23 @@ main = do
       ConsumerConfig
         { ccJobsTable = "consumers_example_jobs"
         , ccConsumersTable = "consumers_example_consumers"
-        , ccJobSelectors = ["id", "message"]
-        , ccJobFetcher = id
-        , ccJobIndex = \(i :: Int64, _msg :: T.Text) -> i
+        , ccJobSelectors = ["id", "run_at", "finished_at", "attempts", "message"]
+        , ccJobFetcher =
+            \(i :: Int64, runAt :: Maybe UTCTime, finishedAt :: Maybe UTCTime, attempts :: Int32, msg :: T.Text) ->
+              Job
+                { jobIndex = i
+                , jobRunAt = runAt
+                , jobFinishedAt = finishedAt
+                , jobAttempts = fromIntegral attempts
+                , jobInfo = msg
+                }
+        , ccJobIndex = jobIndex
         , ccNotificationChannel = Just "consumers_example_chan"
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccJobLogData = \job -> ["job_id" .= jobIndex job]
         }
 
     -- Add a job to the consumer's queue.
@@ -124,15 +133,15 @@ main = do
       commit
 
     -- Invoked when a job is ready to be processed.
-    processJob :: (Int64, T.Text) -> AppM Result
-    processJob (_idx, msg) = do
+    processJob :: Job Int64 T.Text -> AppM Result
+    processJob Job {jobInfo = msg} = do
       logInfo_ msg
       pure (Ok Remove)
 
     -- Invoked when 'processJob' throws an exception. Can handle
     -- failure in different ways, such as: remove the job from the
     -- queue, mark it as processed, or schedule it for rerun.
-    handleException :: SomeException -> (Int64, T.Text) -> AppM Action
+    handleException :: SomeException -> Job Int64 T.Text -> AppM Action
     handleException _ _ = pure . RerunAfter $ imicroseconds 500000
 
 -- | Table where jobs are stored. See
