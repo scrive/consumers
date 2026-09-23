@@ -287,7 +287,6 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
         ExitCaseSuccess (Ok _) -> pure ()
         _ ->
           liftBase $
-            Prom.withLabel jobsFailedAttempts jobName $
-              (`Prom.observe` fromIntegral (ccJobAttempts job))
+            Prom.withLabel jobsFailedAttempts jobName (`Prom.observe` fromIntegral (ccJobAttempts job))
 
     handleEx e = logAttention "Exception while instrumenting job" $ object ["exception" .= show e]
