@@ -3,3 +3,4 @@ doctest:        False
 tests:          True
 postgresql:     True
 installed:      -all
+github-patches: postgres-15.patch

@@ -8,9 +8,9 @@
 #
 # For more information, see https://github.com/haskell-CI/haskell-ci
 #
-# version: 0.19.20260104
+# version: 0.19.20260923
 #
-# REGENDATA ("0.19.20260104",["github","cabal.project","--config=cabal.haskell-ci"])
+# REGENDATA ("0.19.20260923",["github","cabal.project","--config=cabal.haskell-ci"])
 #
 name: Haskell-CI
 on:
@@ -23,6 +23,8 @@ on:
   merge_group:
     branches:
       - master
+  workflow_dispatch:
+    {}
 jobs:
   linux:
     name: Haskell-CI - Linux - ${{ matrix.compiler }}
@@ -33,7 +35,7 @@ jobs:
       image: buildpack-deps:jammy
     services:
       postgres:
-        image: postgres:14
+        image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
@@ -44,7 +46,7 @@ jobs:
           - compiler: ghc-9.14.1
             compilerKind: ghc
             compilerVersion: 9.14.1
-            setup-method: ghcup
+            setup-method: ghcup-prerelease
             allow-failure: false
           - compiler: ghc-9.12.2
             compilerKind: ghc
@@ -94,6 +96,21 @@ jobs:
       - name: Install GHC (GHCup)
         if: matrix.setup-method == 'ghcup'
         run: |
+          "$HOME/.ghcup/bin/ghcup" install ghc "$HCVER" || (cat "$HOME"/.ghcup/logs/*.* && false)
+          HC=$("$HOME/.ghcup/bin/ghcup" whereis ghc "$HCVER")
+          HCPKG=$(echo "$HC" | sed 's#ghc$#ghc-pkg#')
+          HADDOCK=$(echo "$HC" | sed 's#ghc$#haddock#')
+          echo "HC=$HC" >> "$GITHUB_ENV"
+          echo "HCPKG=$HCPKG" >> "$GITHUB_ENV"
+          echo "HADDOCK=$HADDOCK" >> "$GITHUB_ENV"
+        env:
+          HCKIND: ${{ matrix.compilerKind }}
+          HCNAME: ${{ matrix.compiler }}
+          HCVER: ${{ matrix.compilerVersion }}
+      - name: Install GHC (GHCup prerelease)
+        if: matrix.setup-method == 'ghcup-prerelease'
+        run: |
+          "$HOME/.ghcup/bin/ghcup" config add-release-channel prereleases
           "$HOME/.ghcup/bin/ghcup" install ghc "$HCVER" || (cat "$HOME"/.ghcup/logs/*.* && false)
           HC=$("$HOME/.ghcup/bin/ghcup" whereis ghc "$HCVER")
           HCPKG=$(echo "$HC" | sed 's#ghc$#ghc-pkg#')
@@ -166,14 +183,14 @@ jobs:
           chmod a+x $HOME/.cabal/bin/cabal-plan
           cabal-plan --version
       - name: checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           path: source
       - name: initial cabal.project for sdist
         run: |
           touch cabal.project
-          echo "packages: $GITHUB_WORKSPACE/source/consumers" >> cabal.project
           echo "packages: $GITHUB_WORKSPACE/source/consumers-metrics-prometheus" >> cabal.project
+          echo "packages: $GITHUB_WORKSPACE/source/consumers" >> cabal.project
           cat cabal.project
       - name: sdist
         run: |
@@ -185,26 +202,26 @@ jobs:
           find sdist -maxdepth 1 -type f -name '*.tar.gz' -exec tar -C $GITHUB_WORKSPACE/unpacked -xzvf {} \;
       - name: generate cabal.project
         run: |
-          PKGDIR_consumers="$(find "$GITHUB_WORKSPACE/unpacked" -maxdepth 1 -type d -regex '.*/consumers-[0-9.]*')"
-          echo "PKGDIR_consumers=${PKGDIR_consumers}" >> "$GITHUB_ENV"
           PKGDIR_consumers_metrics_prometheus="$(find "$GITHUB_WORKSPACE/unpacked" -maxdepth 1 -type d -regex '.*/consumers-metrics-prometheus-[0-9.]*')"
           echo "PKGDIR_consumers_metrics_prometheus=${PKGDIR_consumers_metrics_prometheus}" >> "$GITHUB_ENV"
+          PKGDIR_consumers="$(find "$GITHUB_WORKSPACE/unpacked" -maxdepth 1 -type d -regex '.*/consumers-[0-9.]*')"
+          echo "PKGDIR_consumers=${PKGDIR_consumers}" >> "$GITHUB_ENV"
           rm -f cabal.project cabal.project.local
           touch cabal.project
           touch cabal.project.local
-          echo "packages: ${PKGDIR_consumers}" >> cabal.project
           echo "packages: ${PKGDIR_consumers_metrics_prometheus}" >> cabal.project
-          echo "package consumers" >> cabal.project
-          echo "    ghc-options: -Werror=missing-methods -Werror=missing-fields" >> cabal.project
+          echo "packages: ${PKGDIR_consumers}" >> cabal.project
           echo "package consumers-metrics-prometheus" >> cabal.project
           echo "    ghc-options: -Werror=missing-methods -Werror=missing-fields" >> cabal.project
-          if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "package consumers" >> cabal.project ; fi
-          if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "    ghc-options: -Werror=unused-packages" >> cabal.project ; fi
+          echo "package consumers" >> cabal.project
+          echo "    ghc-options: -Werror=missing-methods -Werror=missing-fields" >> cabal.project
           if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "package consumers-metrics-prometheus" >> cabal.project ; fi
           if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "    ghc-options: -Werror=unused-packages" >> cabal.project ; fi
-          echo "package consumers" >> cabal.project
-          echo "    ghc-options: -Werror=incomplete-patterns -Werror=incomplete-uni-patterns" >> cabal.project
+          if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "package consumers" >> cabal.project ; fi
+          if [ $((HCNUMVER >= 90400)) -ne 0 ] ; then echo "    ghc-options: -Werror=unused-packages" >> cabal.project ; fi
           echo "package consumers-metrics-prometheus" >> cabal.project
+          echo "    ghc-options: -Werror=incomplete-patterns -Werror=incomplete-uni-patterns" >> cabal.project
+          echo "package consumers" >> cabal.project
           echo "    ghc-options: -Werror=incomplete-patterns -Werror=incomplete-uni-patterns" >> cabal.project
           cat >> cabal.project <<EOF
           constraints: data-sketches < 0.4
@@ -223,7 +240,7 @@ jobs:
           $CABAL v2-build $ARG_COMPILER $ARG_TESTS $ARG_BENCH --dry-run all
           cabal-plan
       - name: restore cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           key: ${{ runner.os }}-${{ matrix.compiler }}-${{ github.sha }}
           path: ~/.cabal/store
@@ -243,9 +260,9 @@ jobs:
           $CABAL v2-test $ARG_COMPILER $ARG_TESTS $ARG_BENCH all --test-show-details=direct
       - name: cabal check
         run: |
-          cd ${PKGDIR_consumers} || false
-          ${CABAL} -vnormal check
           cd ${PKGDIR_consumers_metrics_prometheus} || false
+          ${CABAL} -vnormal check
+          cd ${PKGDIR_consumers} || false
           ${CABAL} -vnormal check
       - name: haddock
         run: |
@@ -256,7 +273,7 @@ jobs:
           $CABAL v2-build $ARG_COMPILER --disable-tests --disable-benchmarks all
       - name: save cache
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           key: ${{ runner.os }}-${{ matrix.compiler }}-${{ github.sha }}
           path: ~/.cabal/store

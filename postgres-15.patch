@@ -1,0 +1,11 @@
+--- a/.github/workflows/haskell-ci.yml
++++ b/.github/workflows/haskell-ci.yml
+@@ -33,7 +33,7 @@
+     container:
+       image: buildpack-deps:jammy
+     services:
+       postgres:
+-        image: postgres:14
++        image: postgres:15
+         env:
+           POSTGRES_PASSWORD: postgres
