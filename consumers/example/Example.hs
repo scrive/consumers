@@ -33,7 +33,7 @@ main = do
       connString : _args -> pure $ T.pack connString
       [] ->
         lookupEnv "GITHUB_ACTIONS" >>= \case
-          Just "true" -> pure "host=postgres user=postgres password=postgres"
+          Just "true" -> pure "host=localhost user=postgres password=postgres dbname=consumers_example"
           _ -> printUsage >> exitFailure
 
   let connSettings =
