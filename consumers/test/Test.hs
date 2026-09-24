@@ -52,7 +52,7 @@ runTestEnv connSource logger =
     . unTestEnv
 
 main :: IO ()
-main = void . T.runTestTT $ T.TestCase test
+main = T.runTestTTAndExit $ T.TestCase test
 
 test :: IO ()
 test = do
@@ -61,7 +61,7 @@ test = do
       connString : _args -> pure $ T.pack connString
       [] ->
         lookupEnv "GITHUB_ACTIONS" >>= \case
-          Just "true" -> pure "host=postgres user=postgres password=postgres"
+          Just "true" -> pure "host=localhost user=postgres password=postgres dbname=consumers_test"
           _ -> printUsage >> exitFailure
 
   let connSettings =
