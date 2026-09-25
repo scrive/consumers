@@ -10,14 +10,14 @@ description:        Library for setting up concurrent consumers of data
 homepage:           https://github.com/scrive/consumers
 license:            BSD-3-Clause
 license-file:       LICENSE
-extra-source-files: CHANGELOG.md, README.md
+extra-doc-files:    CHANGELOG.md, README.md
 author:             Scrive AB
 maintainer:         Andrzej Rybczak <andrzej@rybczak.net>,
                     Jonathan Jouty <jonathan.jouty@scrive.com>
 copyright:          Scrive AB
 category:           Concurrency, Database
 build-type:         Simple
-tested-with:        GHC == { 9.2.8, 9.4.8, 9.6.7, 9.8.4, 9.10.3, 9.12.2, 9.14.1 }
+tested-with:        GHC ^>= { 9.2, 9.4, 9.6, 9.8, 9.10, 9.12, 9.14 }
 
 bug-reports:   https://github.com/scrive/consumers/issues
 source-repository head
@@ -99,7 +99,7 @@ test-suite consumers-test
   build-depends:      base,
                       consumers,
                       exceptions,
-                      HUnit,
+                      HUnit >= 1.6,
                       hpqtypes,
                       hpqtypes-extras >= 1.19.0.0,
                       log-base,
