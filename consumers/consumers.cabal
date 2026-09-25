@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers
-version:            2.3.5.0
+version:            2.4.0.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -51,6 +51,7 @@ library
                     Database.PostgreSQL.Consumers.Config,
                     Database.PostgreSQL.Consumers.Consumer,
                     Database.PostgreSQL.Consumers.Components,
+                    Database.PostgreSQL.Consumers.RetryStrategy,
                     Database.PostgreSQL.Consumers.Utils
 
   build-depends:    base              >= 4.16   && < 5
@@ -64,6 +65,7 @@ library
                   , monad-control     >= 1.0
                   , monad-time        >= 0.4
                   , mtl               >= 2.2
+                  , random            >= 1.2
                   , safe-exceptions   >= 0.1.7
                   , stm               >= 2.4
                   , text              >= 1.2

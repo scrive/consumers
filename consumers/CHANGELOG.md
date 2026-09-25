@@ -1,4 +1,11 @@
-# consumers-2.3.5.0 (2026-??-??)
+# consumers-2.4.0.0 (2026-??-??)
+* **Breaking:** add `ccJobAttempts :: job -> Int` to `ConsumerConfig`, a
+  selector for the job's current (consecutive-failure) attempt count. Needs
+  `ccJobSelectors`/`ccJobFetcher` to expose the `attempts` column.
+* Add `Database.PostgreSQL.Consumers.RetryStrategy`, ready-made
+  `ccOnException` retry strategies (`constantBackoff`, `linearBackoff`,
+  `exponentialBackoff`, `exponentialBackoffWithJitter`) built on
+  `ccJobAttempts`.
 * Add `hoistConsumer` to `Database.PostgreSQL.Consumers.Config`.
 
 # consumers-2.3.4.0 (2025-11-27)

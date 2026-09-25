@@ -83,6 +83,14 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
+  , ccJobAttempts :: !(job -> Int)
+  -- ^ Selector for taking out the number of processing attempts made so far
+  -- (i.e. the job's @attempts@ column) from the job object. Needs
+  -- 'ccJobSelectors'/'ccJobFetcher' to expose it. This is the number of
+  -- consecutive failed attempts, including the current one: it's reset to 1
+  -- once a job has succeeded, so it's a streak of failures rather than a
+  -- lifetime total. See "Database.PostgreSQL.Consumers.RetryStrategy" for
+  -- ready-made 'ccOnException' handlers built on it.
   , ccNotificationChannel :: !(Maybe Channel)
   -- ^ Notification channel used for listening for incoming jobs.  Whenever the
   -- consumer receives a notification, it checks the database for any pending

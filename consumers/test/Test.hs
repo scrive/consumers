@@ -13,6 +13,7 @@ import Data.Int
 import Data.Text qualified as T
 import Data.Time
 import Database.PostgreSQL.Consumers
+import Database.PostgreSQL.Consumers.RetryStrategy (constantBackoff)
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -144,16 +145,17 @@ test = do
       ConsumerConfig
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
-        , ccJobSelectors = ["id", "countdown"]
+        , ccJobSelectors = ["id", "attempts", "countdown"]
         , ccJobFetcher = id
-        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccJobIndex = \(i :: Int64, _attempts :: Int32, _countdown :: Int32) -> i
+        , ccJobAttempts = \(_i, attempts :: Int32, _countdown) -> fromIntegral attempts
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
 
     putJob :: Int32 -> TestEnv ()
@@ -167,16 +169,17 @@ test = do
           <> ")"
       notify "consumers_test_chan" ""
 
-    processJob :: (Int64, Int32) -> TestEnv Result
-    processJob (_idx, countdown) = do
+    processJob :: (Int64, Int32, Int32) -> TestEnv Result
+    processJob (_idx, _attempts, countdown) = do
       when (countdown > 0) $ do
         putJob (countdown - 1)
         putJob (countdown - 1)
         commit
       pure (Ok Remove)
 
-    handleException :: SomeException -> (Int64, Int32) -> TestEnv Action
-    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+    handleException :: SomeException -> (Int64, Int32, Int32) -> TestEnv Action
+    handleException _ (_idx, attempts, _countdown) =
+      pure $ constantBackoff 5 (imicroseconds 500000) (fromIntegral attempts)
 
 jobsTable :: Table
 jobsTable =
