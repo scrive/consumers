@@ -7,6 +7,7 @@ module Database.PostgreSQL.Consumers.Config
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
+import Data.Int (Int32)
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
@@ -83,7 +84,7 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
-  , ccJobAttempts :: !(job -> Int)
+  , ccJobAttempts :: !(job -> Int32)
   -- ^ Selector for taking out the number of processing attempts made so far
   -- (i.e. the job's @attempts@ column) from the job object. Needs
   -- 'ccJobSelectors'/'ccJobFetcher' to expose it. This is the number of

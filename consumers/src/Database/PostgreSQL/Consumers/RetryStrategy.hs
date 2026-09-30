@@ -22,6 +22,7 @@ module Database.PostgreSQL.Consumers.RetryStrategy
   ) where
 
 import Control.Monad.IO.Class
+import Data.Int (Int32)
 import Data.Time
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.PQTypes.Interval
@@ -34,11 +35,11 @@ constantBackoff
   -- ^ Maximum number of attempts before the job is removed.
   -> Interval
   -- ^ Delay before every retry.
-  -> Int
+  -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Action
 constantBackoff maxAttempts delay attempts
-  | attempts >= maxAttempts = Remove
+  | fromIntegral attempts >= maxAttempts = Remove
   | otherwise = RerunAfter delay
 
 -- | Retry with a delay that grows linearly with the attempt count
@@ -48,12 +49,12 @@ linearBackoff
   -- ^ Maximum number of attempts before the job is removed.
   -> Interval
   -- ^ Delay unit; the delay before retry number @n@ is @n * delayUnit@.
-  -> Int
+  -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Action
 linearBackoff maxAttempts delayUnit attempts
-  | attempts >= maxAttempts = Remove
-  | otherwise = RerunAfter $ scaleInterval attempts delayUnit
+  | fromIntegral attempts >= maxAttempts = Remove
+  | otherwise = RerunAfter $ scaleInterval (fromIntegral attempts) delayUnit
 
 -- | Retry with a delay that doubles on every attempt
 -- (@baseDelay * 2 ^ (attempts - 1)@), capped at @maxDelay@ so it doesn't
@@ -65,12 +66,12 @@ exponentialBackoff
   -- ^ Base delay, used for the first retry.
   -> Interval
   -- ^ Delay cap; the computed delay never exceeds this.
-  -> Int
+  -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Action
 exponentialBackoff maxAttempts baseDelay maxDelay attempts
-  | attempts >= maxAttempts = Remove
-  | otherwise = RerunAfter $ nextDelay baseDelay maxDelay attempts
+  | fromIntegral attempts >= maxAttempts = Remove
+  | otherwise = RerunAfter $ nextDelay baseDelay maxDelay (fromIntegral attempts)
 
 -- | Like 'exponentialBackoff', but adds up to +/-50% random jitter to the
 -- computed delay.
@@ -88,14 +89,14 @@ exponentialBackoffWithJitter
   -- ^ Base delay, used for the first retry (before jitter).
   -> Interval
   -- ^ Delay cap, applied before jitter is added.
-  -> Int
+  -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> m Action
 exponentialBackoffWithJitter maxAttempts baseDelay maxDelay attempts
-  | attempts >= maxAttempts = pure Remove
+  | fromIntegral attempts >= maxAttempts = pure Remove
   | otherwise = do
       jitter <- liftIO $ randomRIO (0.5, 1.5 :: Double)
-      pure . RerunAfter . scaleIntervalD jitter $ nextDelay baseDelay maxDelay attempts
+      pure . RerunAfter . scaleIntervalD jitter $ nextDelay baseDelay maxDelay (fromIntegral attempts)
 
 ----------------------------------------
 
