@@ -21,6 +21,7 @@ module Database.PostgreSQL.Consumers.RetryStrategy
   , exponentialBackoffWithJitter
   , RetryDecision(..)
   , withRetryAction
+  , exponentialDelay
   ) where
 
 import Control.Monad.IO.Class
@@ -73,7 +74,7 @@ exponentialBackoff
   -> Action
 exponentialBackoff maxAttempts baseDelay maxDelay attempts
   | fromIntegral attempts >= maxAttempts = Remove
-  | otherwise = RerunAfter $ nextDelay baseDelay maxDelay (fromIntegral attempts)
+  | otherwise = RerunAfter $ exponentialDelay baseDelay maxDelay (fromIntegral attempts)
 
 -- | Like 'exponentialBackoff', but adds up to +/-50% random jitter to the
 -- computed delay.
@@ -98,12 +99,12 @@ exponentialBackoffWithJitter maxAttempts baseDelay maxDelay attempts
   | fromIntegral attempts >= maxAttempts = pure Remove
   | otherwise = do
       jitter <- liftIO $ randomRIO (0.5, 1.5 :: Double)
-      pure . RerunAfter . scaleIntervalD jitter $ nextDelay baseDelay maxDelay (fromIntegral attempts)
+      pure . RerunAfter . scaleIntervalD jitter $ exponentialDelay baseDelay maxDelay (fromIntegral attempts)
 
 ----------------------------------------
 
-nextDelay :: Interval -> Interval -> Int -> Interval
-nextDelay baseDelay maxDelay attempts = min' maxDelay $ scaleInterval (2 ^ (attempts - 1)) baseDelay
+exponentialDelay :: Interval -> Interval -> Int -> Interval
+exponentialDelay baseDelay maxDelay attempts = min' maxDelay $ scaleInterval (2 ^ (attempts - 1)) baseDelay
   where
     min' a b = if intervalToDiffTime a < intervalToDiffTime b then a else b
 
