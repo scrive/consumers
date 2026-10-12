@@ -19,6 +19,8 @@ module Database.PostgreSQL.Consumers.RetryStrategy
   , linearBackoff
   , exponentialBackoff
   , exponentialBackoffWithJitter
+  , RetryDecision(..)
+  , withRetryAction
   ) where
 
 import Control.Monad.IO.Class
@@ -127,3 +129,18 @@ intervalToDiffTime Interval {..} = secondsToDiffTime seconds
 
 diffTimeToInterval :: DiffTime -> Interval
 diffTimeToInterval = imicroseconds . fromInteger . (`div` 1000000) . diffTimeToPicoseconds
+
+data RetryDecision
+  = GiveUp
+  | Retry
+
+-- | Supporting function to simplify logging or other actions based on the
+-- decision of the backoff function.
+withRetryAction :: Monad m => (RetryDecision -> m ()) -> Action -> m Action
+withRetryAction onDecision action = do
+  onDecision $ case action of
+    -- Since this module doesn't return `MarkProcessed`, and it most
+    -- likely never will. We can just pattern match on `Remove`.
+    Remove -> GiveUp
+    _ -> Retry
+  pure action
