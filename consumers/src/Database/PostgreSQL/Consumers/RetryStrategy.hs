@@ -12,11 +12,11 @@ module Database.PostgreSQL.Consumers.RetryStrategy
     constantDelay
   , linearDelay
   , exponentialDelay
+  , jitter
 
-    -- * Strategies
+    -- * Actions
   , retryForever
   , giveUpAfter
-  , withJitter
 
     -- * Utils
   , RetryDecision (..)
@@ -85,14 +85,12 @@ giveUpAfter maxAttempts delay attempts
   | attempts >= maxAttempts = Remove
   | otherwise = retryForever delay attempts
 
--- | Scale the delay of 'RerunAfter' by a random factor between 0.5 and 1.5,
--- so that jobs which fail together do not retry together.
-withJitter :: MonadIO m => Action -> m Action
-withJitter = \case
-  RerunAfter delay -> do
-    factor <- liftIO $ randomRIO (0.5, 1.5 :: Double)
-    pure . RerunAfter . microsToInterval . round $ factor * fromInteger (intervalToMicros delay)
-  action -> pure action
+-- | Scale a delay by a random factor between 0.5 and 1.5, so that jobs which
+-- fail together do not retry together.
+jitter :: MonadIO m => Interval -> m Interval
+jitter delay = do
+  factor <- liftIO $ randomRIO (0.5, 1.5 :: Double)
+  pure . microsToInterval . round $ factor * fromInteger (intervalToMicros delay)
 
 data RetryDecision
   = GiveUp
