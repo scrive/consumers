@@ -85,13 +85,11 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
   , ccJobAttempts :: !(job -> Int32)
-  -- ^ Selector for taking out the number of processing attempts made so far
-  -- (i.e. the job's @attempts@ column) from the job object. Needs
-  -- 'ccJobSelectors'/'ccJobFetcher' to expose it. This is the number of
-  -- consecutive failed attempts, including the current one: it's reset to 1
-  -- once a job has succeeded, so it's a streak of failures rather than a
-  -- lifetime total. See "Database.PostgreSQL.Consumers.RetryStrategy" for
-  -- ready-made 'ccOnException' handlers built on it.
+  -- ^ Selector for taking out the @attempts@ column from the job object.
+  -- Needs 'ccJobSelectors' and 'ccJobFetcher' to expose it. It counts
+  -- consecutive failed attempts, including the current one, and resets after
+  -- a success. See "Database.PostgreSQL.Consumers.RetryStrategy" for
+  -- 'ccOnException' helpers built on it.
   , ccNotificationChannel :: !(Maybe Channel)
   -- ^ Notification channel used for listening for incoming jobs.  Whenever the
   -- consumer receives a notification, it checks the database for any pending

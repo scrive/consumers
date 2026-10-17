@@ -278,11 +278,7 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
             ExitCaseException _ -> "exception"
             ExitCaseAbort -> "abort"
       liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
-      -- Only observe the attempt count for jobs that didn't succeed: for
-      -- 'Ok' results it carries no information (denoising one-off failures
-      -- from persistent retries is the whole point of this metric), and it
-      -- would otherwise dominate the histogram with a flood of "attempt 1"
-      -- observations.
+      -- Successful jobs would flood the histogram with "attempt 1".
       case jobExit of
         ExitCaseSuccess (Ok _) -> pure ()
         _ ->
