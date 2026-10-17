@@ -25,7 +25,6 @@ module Database.PostgreSQL.Consumers.RetryStrategy
 
 import Control.Monad.IO.Class
 import Data.Int
-import Data.Time
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.PQTypes.Interval
 import System.Random
@@ -47,7 +46,7 @@ linearDelay
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Interval
 linearDelay unit attempts =
-  scaleInterval attempts unit
+  microsToInterval $ toInteger (max 0 attempts) * intervalToMicros unit
 
 -- | @base * 2 ^ (n - 1)@ after attempt @n@, capped at @maxDelay@.
 exponentialDelay
@@ -59,9 +58,8 @@ exponentialDelay
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Interval
 exponentialDelay base maxDelay attempts =
-  min' maxDelay $ scaleInterval (2 ^ (attempts - 1)) base
-  where
-    min' a b = if intervalToDiffTime a < intervalToDiffTime b then a else b
+  microsToInterval . min (intervalToMicros maxDelay) $
+    intervalToMicros base * 2 ^ min 62 (max 1 attempts - 1)
 
 -- | Rerun the job after the given delay, however many times it fails.
 retryForever
@@ -93,7 +91,7 @@ withJitter :: MonadIO m => Action -> m Action
 withJitter = \case
   RerunAfter delay -> do
     factor <- liftIO $ randomRIO (0.5, 1.5 :: Double)
-    pure . RerunAfter $ scaleIntervalD factor delay
+    pure . RerunAfter . microsToInterval . round $ factor * fromInteger (intervalToMicros delay)
   action -> pure action
 
 data RetryDecision
@@ -111,25 +109,19 @@ withRetryAction onDecision action = do
 
 ----------------------------------------
 
--- | Scale an 'Interval' by an integer factor.
-scaleInterval :: Int32 -> Interval -> Interval
-scaleInterval factor = diffTimeToInterval . (fromIntegral factor *) . intervalToDiffTime
-
--- | Scale an 'Interval' by a fractional factor.
-scaleIntervalD :: Double -> Interval -> Interval
-scaleIntervalD factor = diffTimeToInterval . (realToFrac factor *) . intervalToDiffTime
-
-intervalToDiffTime :: Interval -> DiffTime
-intervalToDiffTime Interval {..} = secondsToDiffTime seconds
+-- Intervals are compared like PostgreSQL does it: a year is 12 months, a month
+-- is 30 days and a day is 24 hours.
+intervalToMicros :: Interval -> Integer
+intervalToMicros Interval {..} =
+  ((((days * 24 + toInteger intHours) * 60 + toInteger intMinutes) * 60 + toInteger intSeconds) * 1000000)
+    + toInteger intMicroseconds
   where
-    seconds =
-      (toInteger intYears * 365 * 24 * 60 * 60)
-        + (toInteger intMonths * 30 * 24 * 60 * 60)
-        + (toInteger intDays * 24 * 60 * 60)
-        + (toInteger intHours * 60 * 60)
-        + (toInteger intMinutes * 60)
-        + toInteger intSeconds
-        + (toInteger intMicroseconds `div` 1000000)
+    days = (toInteger intYears * 12 + toInteger intMonths) * 30 + toInteger intDays
 
-diffTimeToInterval :: DiffTime -> Interval
-diffTimeToInterval = imicroseconds . fromInteger . (`div` 1000000) . diffTimeToPicoseconds
+-- Saturates at the largest interval that 'intSeconds' can hold. 'intMicroseconds'
+-- alone would overflow after about 36 minutes.
+microsToInterval :: Integer -> Interval
+microsToInterval micros = mempty {intSeconds = fromInteger s, intMicroseconds = fromInteger us}
+  where
+    (s, us) = max 0 (min maxMicros micros) `divMod` 1000000
+    maxMicros = toInteger (maxBound :: Int32) * 1000000 + 999999
