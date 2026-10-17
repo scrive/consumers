@@ -70,10 +70,12 @@ retryStrategyTest = do
   T.assertEqual "retry forever" (RerunAfter base) (retryForever (constantDelay base) maxBound)
   T.assertEqual "retry before limit" (RerunAfter base) (giveUpAfter 3 (constantDelay base) 2)
   T.assertEqual "give up at limit" Remove (giveUpAfter 3 (constantDelay base) 3)
-  forM_ [1 .. 20 :: Int] $ \_ -> do
-    delay <- jitter $ iseconds 10
-    T.assertBool ("jitter within bounds: " <> show delay) $
-      delay >= iseconds 5 && delay <= iseconds 15
+  forM_ [(Nothing, 5, 15), (Just 0.1, 9, 11), (Just 5, 0, 20)] $ \(fraction, low, high) ->
+    forM_ [1 .. 20 :: Int] $ \_ -> do
+      delay <- jitter fraction $ iseconds 10
+      T.assertBool ("jitter " <> show fraction <> " within bounds: " <> show delay) $
+        delay >= iseconds low && delay <= iseconds high
+  T.assertEqual "no jitter" (iseconds 10) =<< jitter (Just 0) (iseconds 10)
 
 test :: IO ()
 test = do

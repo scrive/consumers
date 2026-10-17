@@ -31,6 +31,7 @@ module Database.PostgreSQL.Consumers.RetryStrategy
 
 import Control.Monad.IO.Class
 import Data.Int
+import Data.Maybe
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.PQTypes.Interval
 import System.Random
@@ -91,13 +92,25 @@ giveUpAfter maxAttempts delay attempts
   | attempts >= maxAttempts = Remove
   | otherwise = retryForever delay attempts
 
--- | Scale a delay by a random factor between 0.5 and 1.5, so that jobs which
--- fail together do not retry together. The result can exceed a delay cap by
--- up to 50%.
-jitter :: MonadIO m => Interval -> m Interval
-jitter delay = do
-  factor <- liftIO $ randomRIO (0.5, 1.5 :: Double)
+-- | Scale a delay by a random factor between @1 - p@ and @1 + p@, so that jobs
+-- which fail together do not retry together. The result can exceed a delay
+-- cap by a fraction @p@.
+--
+-- @p@ is a fraction between 0 and 1, and 0.5 (plus or minus 50%) by default.
+-- That spreads retries over one full delay, like the "full jitter" of
+-- <https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/>,
+-- but it never gives a delay close to zero.
+jitter
+  :: MonadIO m
+  => Maybe Double
+  -- ^ Plus or minus fraction of the delay; 'Nothing' means 0.5.
+  -> Interval
+  -> m Interval
+jitter mFraction delay = do
+  factor <- liftIO $ randomRIO (1 - fraction, 1 + fraction)
   pure . microsToInterval . round $ factor * fromInteger (intervalToMicros delay)
+  where
+    fraction = max 0 . min 1 $ fromMaybe 0.5 mFraction
 
 data RetryDecision
   = GiveUp
