@@ -98,7 +98,7 @@ test-suite consumers-test
                       consumers,
                       exceptions,
                       HUnit >= 1.6,
-                      hpqtypes,
+                      hpqtypes >= 1.15.0.0,
                       hpqtypes-extras >= 1.19.0.0,
                       log-base,
                       monad-control,
