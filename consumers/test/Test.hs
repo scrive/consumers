@@ -192,7 +192,7 @@ test = do
       notify "consumers_test_chan" ""
 
     processJob :: (Int64, Int32, Int32) -> TestEnv Result
-    processJob (_idx, _attempts, countdown) = do
+    processJob (_idx, _attempts, countdown) = withNewSession $ do
       when (countdown > 0) $ do
         putJob (countdown - 1)
         putJob (countdown - 1)
