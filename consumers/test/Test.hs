@@ -148,7 +148,7 @@ test = do
         , ccJobSelectors = ["id", "attempts", "countdown"]
         , ccJobFetcher = id
         , ccJobIndex = \(i :: Int64, _attempts :: Int32, _countdown :: Int32) -> i
-        , ccJobAttempts = \(_i, attempts :: Int32, _countdown) -> fromIntegral attempts
+        , ccJobAttempts = \(_i, attempts, _countdown) -> attempts
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
