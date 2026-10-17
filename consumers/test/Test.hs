@@ -13,6 +13,7 @@ import Data.Int
 import Data.Text qualified as T
 import Data.Time
 import Database.PostgreSQL.Consumers
+import Database.PostgreSQL.Consumers.RetryStrategy
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -52,7 +53,29 @@ runTestEnv connSource logger =
     . unTestEnv
 
 main :: IO ()
-main = T.runTestTTAndExit $ T.TestCase test
+main = T.runTestTTAndExit $ T.TestList [T.TestCase retryStrategyTest, T.TestCase test]
+
+retryStrategyTest :: IO ()
+retryStrategyTest = do
+  let base = imicroseconds 500000
+      cap = iminutes 60
+  T.assertEqual "first exponential delay" base (exponentialDelay base cap 1)
+  T.assertEqual "second exponential delay" (iseconds 1) (exponentialDelay base cap 2)
+  forM_ [0, -1, minBound] $ \attempts ->
+    T.assertEqual ("exponential delay at " <> show attempts) base (exponentialDelay base cap attempts)
+  forM_ [64, 1000, maxBound] $ \attempts ->
+    T.assertEqual ("exponential delay at " <> show attempts) (iseconds 3600) (exponentialDelay base cap attempts)
+  T.assertEqual "linear delay" (iseconds 3) (linearDelay (iseconds 1) 3)
+  T.assertEqual "linear delay at zero" (iseconds 1) (linearDelay (iseconds 1) 0)
+  T.assertEqual "retry forever" (RerunAfter base) (retryForever (constantDelay base) maxBound)
+  T.assertEqual "retry before limit" (RerunAfter base) (giveUpAfter 3 (constantDelay base) 2)
+  T.assertEqual "give up at limit" Remove (giveUpAfter 3 (constantDelay base) 3)
+  forM_ [(Nothing, 5, 15), (Just 0.1, 9, 11), (Just 5, 0, 20)] $ \(fraction, low, high) ->
+    forM_ [1 .. 20 :: Int] $ \_ -> do
+      delay <- jitter fraction $ iseconds 10
+      T.assertBool ("jitter " <> show fraction <> " within bounds: " <> show delay) $
+        delay >= iseconds low && delay <= iseconds high
+  T.assertEqual "no jitter" (iseconds 10) =<< jitter (Just 0) (iseconds 10)
 
 test :: IO ()
 test = do
@@ -144,16 +167,17 @@ test = do
       ConsumerConfig
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
-        , ccJobSelectors = ["id", "countdown"]
+        , ccJobSelectors = ["id", "attempts", "countdown"]
         , ccJobFetcher = id
-        , ccJobIndex = \(i :: Int64, _ :: Int32) -> i
+        , ccJobIndex = \(i :: Int64, _attempts :: Int32, _countdown :: Int32) -> i
+        , ccJobAttempts = \(_i, attempts, _countdown) -> attempts
         , ccNotificationChannel = Just "consumers_test_chan"
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs = 20
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
 
     putJob :: Int32 -> TestEnv ()
@@ -167,16 +191,17 @@ test = do
           <> ")"
       notify "consumers_test_chan" ""
 
-    processJob :: (Int64, Int32) -> TestEnv Result
-    processJob (_idx, countdown) = do
+    processJob :: (Int64, Int32, Int32) -> TestEnv Result
+    processJob (_idx, _attempts, countdown) = withNewSession $ do
       when (countdown > 0) $ do
         putJob (countdown - 1)
         putJob (countdown - 1)
         commit
       pure (Ok Remove)
 
-    handleException :: SomeException -> (Int64, Int32) -> TestEnv Action
-    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+    handleException :: SomeException -> (Int64, Int32, Int32) -> TestEnv Action
+    handleException _ (_idx, attempts, _countdown) =
+      pure $ giveUpAfter 5 (constantDelay $ imicroseconds 500000) attempts
 
 jobsTable :: Table
 jobsTable =

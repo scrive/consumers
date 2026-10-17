@@ -7,6 +7,7 @@ module Database.PostgreSQL.Consumers.Config
 
 import Control.Exception (SomeException)
 import Data.Aeson.Types qualified as A
+import Data.Int (Int32)
 import Data.Time
 import Database.PostgreSQL.PQTypes.FromRow
 import Database.PostgreSQL.PQTypes.Interval
@@ -83,6 +84,12 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- ^ Function that transforms the list of fields into a job.
   , ccJobIndex :: !(job -> idx)
   -- ^ Selector for taking out job ID from the job object.
+  , ccJobAttempts :: !(job -> Int32)
+  -- ^ Selector for taking out the @attempts@ column from the job object.
+  -- Needs 'ccJobSelectors' and 'ccJobFetcher' to expose it. It counts
+  -- consecutive failed attempts, including the current one, and resets after
+  -- a success. See "Database.PostgreSQL.Consumers.RetryStrategy" for
+  -- 'ccOnException' helpers built on it.
   , ccNotificationChannel :: !(Maybe Channel)
   -- ^ Notification channel used for listening for incoming jobs.  Whenever the
   -- consumer receives a notification, it checks the database for any pending

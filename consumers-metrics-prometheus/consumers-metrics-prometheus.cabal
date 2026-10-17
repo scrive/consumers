@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers-metrics-prometheus
-version:            1.0.0.0
+version:            1.1.0.0
 synopsis:           Prometheus metrics for the consumers library
 
 description:        Provides seamless instrumentation of your existing
@@ -43,7 +43,7 @@ library
   exposed-modules:  Database.PostgreSQL.Consumers.Instrumented
 
   build-depends:    base              >= 4.16   && < 5
-                  , consumers         >= 2.3
+                  , consumers         >= 2.4
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.13
                   , lifted-base       >= 0.2
