@@ -1,7 +1,13 @@
--- | Retry strategies for 'ccOnException', built on 'ccJobAttempts'.
+-- | Retry helpers for 'ccOnException', built on 'ccJobAttempts'.
 --
--- A strategy combines a delay function with a decision on whether to retry
--- forever ('retryForever') or give up ('giveUpAfter'):
+-- The delay helpers map the attempt count to an 'Interval':
+--
+-- @
+-- ccOnException = \\_ex job -> pure . RerunAfter $
+--   exponentialDelay (iseconds 1) (iminutes 10) (ccJobAttempts config job)
+-- @
+--
+-- 'retryForever' and 'giveUpAfter' turn such a helper into an 'Action':
 --
 -- @
 -- ccOnException = \\_ex job -> pure $

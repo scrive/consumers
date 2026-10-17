@@ -1,8 +1,8 @@
 # consumers-2.4.0.0 (2026-??-??)
 * **Breaking:** add `ccJobAttempts :: job -> Int32` to `ConsumerConfig`. Add
   the `attempts` column to `ccJobSelectors` and return it from this selector.
-* Add `Database.PostgreSQL.Consumers.RetryStrategy` with retry strategies for
-  `ccOnException`.
+* Add the module `Database.PostgreSQL.Consumers.RetryStrategy`. It has delay
+  helpers (constant, linear, exponential, jitter) and retry actions.
 * Add `hoistConsumer` to `Database.PostgreSQL.Consumers.Config`.
 
 # consumers-2.3.4.0 (2025-11-27)
