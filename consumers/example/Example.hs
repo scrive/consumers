@@ -14,7 +14,7 @@ import Control.Monad.IO.Class
 import Data.Int
 import Data.Text qualified as T
 import Database.PostgreSQL.Consumers
-import Database.PostgreSQL.Consumers.RetryStrategy (exponentialBackoff)
+import Database.PostgreSQL.Consumers.RetryStrategy
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -135,13 +135,11 @@ main = do
     -- failure in different ways, such as: remove the job from the
     -- queue, mark it as processed, or schedule it for rerun.
     --
-    -- This uses 'exponentialBackoff' from
-    -- 'Database.PostgreSQL.Consumers.RetryStrategy': give up (remove the
-    -- job) after 5 attempts, otherwise retry with a delay that doubles each
-    -- time, capped at 10 seconds.
+    -- Here: remove the job after 5 attempts, otherwise retry with a delay
+    -- that doubles each time, capped at 10 seconds.
     handleException :: SomeException -> (Int64, Int32, T.Text) -> AppM Action
     handleException _ (_idx, attempts, _msg) =
-      pure $ exponentialBackoff 5 (imicroseconds 500000) (iseconds 10) (fromIntegral attempts)
+      pure $ giveUpAfter 5 (exponentialDelay (imicroseconds 500000) (iseconds 10)) attempts
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.

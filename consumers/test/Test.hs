@@ -13,7 +13,7 @@ import Data.Int
 import Data.Text qualified as T
 import Data.Time
 import Database.PostgreSQL.Consumers
-import Database.PostgreSQL.Consumers.RetryStrategy (constantBackoff)
+import Database.PostgreSQL.Consumers.RetryStrategy
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -179,7 +179,7 @@ test = do
 
     handleException :: SomeException -> (Int64, Int32, Int32) -> TestEnv Action
     handleException _ (_idx, attempts, _countdown) =
-      pure $ constantBackoff 5 (imicroseconds 500000) (fromIntegral attempts)
+      pure $ giveUpAfter 5 (constantDelay $ imicroseconds 500000) attempts
 
 jobsTable :: Table
 jobsTable =
