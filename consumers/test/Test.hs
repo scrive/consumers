@@ -66,6 +66,7 @@ retryStrategyTest = do
   forM_ [64, 1000, maxBound] $ \attempts ->
     T.assertEqual ("exponential delay at " <> show attempts) (iseconds 3600) (exponentialDelay base cap attempts)
   T.assertEqual "linear delay" (iseconds 3) (linearDelay (iseconds 1) 3)
+  T.assertEqual "linear delay at zero" (iseconds 1) (linearDelay (iseconds 1) 0)
   T.assertEqual "retry forever" (RerunAfter base) (retryForever (constantDelay base) maxBound)
   T.assertEqual "retry before limit" (RerunAfter base) (giveUpAfter 3 (constantDelay base) 2)
   T.assertEqual "give up at limit" Remove (giveUpAfter 3 (constantDelay base) 3)

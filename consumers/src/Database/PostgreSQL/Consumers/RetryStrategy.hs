@@ -52,7 +52,7 @@ linearDelay
   -- ^ The job's current attempt count (see 'ccJobAttempts').
   -> Interval
 linearDelay unit attempts =
-  microsToInterval $ toInteger (max 0 attempts) * intervalToMicros unit
+  microsToInterval $ toInteger (max 1 attempts) * intervalToMicros unit
 
 -- | @base * 2 ^ (n - 1)@ after attempt @n@, capped at @maxDelay@.
 exponentialDelay
