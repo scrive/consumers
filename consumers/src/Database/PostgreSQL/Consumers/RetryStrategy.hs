@@ -92,7 +92,8 @@ giveUpAfter maxAttempts delay attempts
   | otherwise = retryForever delay attempts
 
 -- | Scale a delay by a random factor between 0.5 and 1.5, so that jobs which
--- fail together do not retry together.
+-- fail together do not retry together. The result can exceed a delay cap by
+-- up to 50%.
 jitter :: MonadIO m => Interval -> m Interval
 jitter delay = do
   factor <- liftIO $ randomRIO (0.5, 1.5 :: Double)
@@ -102,7 +103,8 @@ data RetryDecision
   = GiveUp
   | Retry
 
--- | Run an action, e.g. logging, based on whether the strategy gave up.
+-- | Run an action, e.g. logging, based on whether the 'Action' reruns the job
+-- ('Retry') or not ('GiveUp'). 'MarkProcessed' counts as 'GiveUp'.
 withRetryAction :: Monad m => (RetryDecision -> m ()) -> Action -> m Action
 withRetryAction onDecision action = do
   onDecision $ case action of
