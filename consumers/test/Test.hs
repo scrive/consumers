@@ -53,7 +53,27 @@ runTestEnv connSource logger =
     . unTestEnv
 
 main :: IO ()
-main = T.runTestTTAndExit $ T.TestCase test
+main = T.runTestTTAndExit $ T.TestList [T.TestCase retryStrategyTest, T.TestCase test]
+
+retryStrategyTest :: IO ()
+retryStrategyTest = do
+  let base = imicroseconds 500000
+      cap = iminutes 60
+  T.assertEqual "first exponential delay" base (exponentialDelay base cap 1)
+  T.assertEqual "second exponential delay" (iseconds 1) (exponentialDelay base cap 2)
+  forM_ [0, -1, minBound] $ \attempts ->
+    T.assertEqual ("exponential delay at " <> show attempts) base (exponentialDelay base cap attempts)
+  forM_ [64, 1000, maxBound] $ \attempts ->
+    T.assertEqual ("exponential delay at " <> show attempts) (iseconds 3600) (exponentialDelay base cap attempts)
+  T.assertEqual "linear delay" (iseconds 3) (linearDelay (iseconds 1) 3)
+  T.assertEqual "retry forever" (RerunAfter base) (retryForever (constantDelay base) maxBound)
+  T.assertEqual "retry before limit" (RerunAfter base) (giveUpAfter 3 (constantDelay base) 2)
+  T.assertEqual "give up at limit" Remove (giveUpAfter 3 (constantDelay base) 3)
+  T.assertEqual "jitter keeps Remove" Remove =<< withJitter Remove
+  withJitter (RerunAfter $ iseconds 10) >>= \case
+    RerunAfter delay ->
+      T.assertBool "jitter within bounds" $ intSeconds delay >= 5 && intSeconds delay <= 15
+    action -> T.assertFailure $ "unexpected jitter result: " <> show action
 
 test :: IO ()
 test = do
