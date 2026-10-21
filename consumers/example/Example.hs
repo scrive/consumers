@@ -139,7 +139,8 @@ main = do
     -- that doubles each time, capped at 10 seconds.
     handleException :: SomeException -> (Int64, Int32, T.Text) -> AppM Action
     handleException _ (_idx, attempts, _msg) =
-      pure $ giveUpAfter 5 (exponentialDelay (imicroseconds 500000) (iseconds 10)) attempts
+      pure . retryOr Remove $
+        giveUpAfter 5 (exponentialDelay (imicroseconds 500000) (iseconds 10)) attempts
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.

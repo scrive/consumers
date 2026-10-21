@@ -65,11 +65,11 @@ retryStrategyTest = do
     T.assertEqual ("exponential delay at " <> show attempts) base (exponentialDelay base cap attempts)
   forM_ [64, 1000, maxBound] $ \attempts ->
     T.assertEqual ("exponential delay at " <> show attempts) (iseconds 3600) (exponentialDelay base cap attempts)
-  T.assertEqual "linear delay" (iseconds 3) (linearDelay (iseconds 1) 3)
-  T.assertEqual "linear delay at zero" (iseconds 1) (linearDelay (iseconds 1) 0)
-  T.assertEqual "retry forever" (RerunAfter base) (retryForever (constantDelay base) maxBound)
-  T.assertEqual "retry before limit" (RerunAfter base) (giveUpAfter 3 (constantDelay base) 2)
-  T.assertEqual "give up at limit" Remove (giveUpAfter 3 (constantDelay base) 3)
+  T.assertEqual "retry forever" (RetryAfter base) (retryForever (constantDelay base) maxBound)
+  T.assertEqual "retry before limit" (RetryAfter base) (giveUpAfter 3 (constantDelay base) 2)
+  T.assertEqual "give up at limit" GiveUp (giveUpAfter 3 (constantDelay base) 3)
+  T.assertEqual "retry action" (RerunAfter base) (retryOr Remove $ RetryAfter base)
+  T.assertEqual "give up action" MarkProcessed (retryOr MarkProcessed GiveUp)
   forM_ [(Nothing, 5, 15), (Just 0.1, 9, 11), (Just 5, 0, 20)] $ \(fraction, low, high) ->
     forM_ [1 .. 20 :: Int] $ \_ -> do
       delay <- jitter fraction $ iseconds 10
@@ -201,7 +201,7 @@ test = do
 
     handleException :: SomeException -> (Int64, Int32, Int32) -> TestEnv Action
     handleException _ (_idx, attempts, _countdown) =
-      pure $ giveUpAfter 5 (constantDelay $ imicroseconds 500000) attempts
+      pure . retryOr Remove $ giveUpAfter 5 (constantDelay $ imicroseconds 500000) attempts
 
 jobsTable :: Table
 jobsTable =

@@ -32,7 +32,8 @@ data ConsumerMetricsConfig = ConsumerMetricsConfig
   , jobExecutionBuckets :: [Prom.Bucket]
   -- ^ Buckets to use for the 'jobExecution' histogram
   , jobFailedAttemptsBuckets :: [Prom.Bucket]
-  -- ^ Buckets to use for the 'jobsFailedAttempts' histogram
+  -- ^ Buckets to use for the 'jobsFailedAttempts' histogram. Keep a @1@
+  -- bucket so that one-off failures are counted apart from repeated ones.
   , collectDegradeThresholdSeconds :: Double
   -- ^ @logAttention@ and graceful degrade if collection takes longer than @x@ seconds
   , collectDegradeSeconds :: Int

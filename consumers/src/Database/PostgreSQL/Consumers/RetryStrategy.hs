@@ -7,26 +7,27 @@
 --   exponentialDelay (iseconds 1) (iminutes 10) (ccJobAttempts config job)
 -- @
 --
--- 'retryForever' and 'giveUpAfter' turn such a helper into an 'Action':
+-- 'retryForever' and 'giveUpAfter' turn such a helper into a 'RetryDecision',
+-- and 'retryOr' turns that into an 'Action':
 --
 -- @
--- ccOnException = \\_ex job -> pure $
+-- ccOnException = \\_ex job -> pure . retryOr Remove $
 --   giveUpAfter 10 (exponentialDelay (iseconds 1) (iminutes 10)) (ccJobAttempts config job)
 -- @
+--
+-- To act on the decision, e.g. to log when the job is given up, match on the
+-- 'RetryDecision' instead of using 'retryOr'.
 module Database.PostgreSQL.Consumers.RetryStrategy
   ( -- * Delays
     constantDelay
-  , linearDelay
   , exponentialDelay
   , jitter
 
-    -- * Actions
+    -- * Decisions
+  , RetryDecision (..)
   , retryForever
   , giveUpAfter
-
-    -- * Utils
-  , RetryDecision (..)
-  , withRetryAction
+  , retryOr
   ) where
 
 import Control.Monad.IO.Class
@@ -45,16 +46,6 @@ constantDelay
   -> Interval
 constantDelay delay _ = delay
 
--- | @n * unit@ after attempt @n@.
-linearDelay
-  :: Interval
-  -- ^ Delay unit; the delay before retry number @n@ is @n * unit@.
-  -> Int32
-  -- ^ The job's current attempt count (see 'ccJobAttempts').
-  -> Interval
-linearDelay unit attempts =
-  microsToInterval $ toInteger (max 1 attempts) * intervalToMicros unit
-
 -- | @base * 2 ^ (n - 1)@ after attempt @n@, capped at @maxDelay@.
 exponentialDelay
   :: Interval
@@ -68,17 +59,23 @@ exponentialDelay base maxDelay attempts =
   microsToInterval . min (intervalToMicros maxDelay) $
     intervalToMicros base * 2 ^ min 62 (max 1 attempts - 1)
 
--- | Rerun the job after the given delay, however many times it fails.
+-- | Whether to rerun a failed job, and after which delay.
+data RetryDecision
+  = GiveUp
+  | RetryAfter Interval
+  deriving (Eq, Show)
+
+-- | Retry the job after the given delay, however many times it fails.
 retryForever
   :: (Int32 -> Interval)
   -- ^ Delay for a given attempt count, e.g. 'exponentialDelay' applied to
   -- its first two arguments.
   -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
-  -> Action
-retryForever delay = RerunAfter . delay
+  -> RetryDecision
+retryForever delay = RetryAfter . delay
 
--- | Like 'retryForever', but remove the job once it has failed @maxAttempts@
+-- | Like 'retryForever', but give up once the job has failed @maxAttempts@
 -- times.
 giveUpAfter
   :: Int32
@@ -87,9 +84,9 @@ giveUpAfter
   -- ^ Delay for a given attempt count.
   -> Int32
   -- ^ The job's current attempt count (see 'ccJobAttempts').
-  -> Action
+  -> RetryDecision
 giveUpAfter maxAttempts delay attempts
-  | attempts >= maxAttempts = Remove
+  | attempts >= maxAttempts = GiveUp
   | otherwise = retryForever delay attempts
 
 -- | Scale a delay by a random factor between @1 - p@ and @1 + p@, so that jobs
@@ -112,19 +109,12 @@ jitter mFraction delay = do
   where
     fraction = max 0 . min 1 $ fromMaybe 0.5 mFraction
 
-data RetryDecision
-  = GiveUp
-  | Retry
-
--- | Run an action, e.g. logging, based on whether the 'Action' reruns the job
--- ('Retry') or not ('GiveUp'). 'MarkProcessed' counts as 'GiveUp'.
-withRetryAction :: Monad m => (RetryDecision -> m ()) -> Action -> m Action
-withRetryAction onDecision action = do
-  onDecision $ case action of
-    RerunAfter _ -> Retry
-    RerunAt _ -> Retry
-    _ -> GiveUp
-  pure action
+-- | Turn a 'RetryDecision' into an 'Action', using the given 'Action' on
+-- 'GiveUp'.
+retryOr :: Action -> RetryDecision -> Action
+retryOr onGiveUp = \case
+  GiveUp -> onGiveUp
+  RetryAfter delay -> RerunAfter delay
 
 ----------------------------------------
 
