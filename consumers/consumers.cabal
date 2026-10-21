@@ -57,6 +57,7 @@ library
   build-depends:    base              >= 4.16   && < 5
                   , aeson             >= 2.0
                   , containers        >= 0.5
+                  , crypto-rng        >= 0.3.0.2
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.13
                   , lifted-base       >= 0.2
@@ -65,7 +66,6 @@ library
                   , monad-control     >= 1.0
                   , monad-time        >= 0.4
                   , mtl               >= 2.2
-                  , random            >= 1.2
                   , safe-exceptions   >= 0.1.7
                   , stm               >= 2.4
                   , text              >= 1.2
@@ -98,6 +98,7 @@ test-suite consumers-test
 
   build-depends:      base,
                       consumers,
+                      crypto-rng,
                       exceptions,
                       HUnit >= 1.6,
                       hpqtypes >= 1.15.0.0,

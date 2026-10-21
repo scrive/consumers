@@ -17,25 +17,30 @@
 --
 -- To act on the decision, e.g. to log when the job is given up, match on the
 -- 'RetryDecision' instead of using 'retryOr'.
+--
+-- 'jitter' spreads out the retries of jobs that fail together:
+--
+-- @
+-- ccOnException = \\_ex job -> retryOr Remove \<$\>
+--   jitter (1, 1.5) (giveUpAfter 10 (exponentialDelay (iseconds 1) (iminutes 10)) (ccJobAttempts config job))
+-- @
 module Database.PostgreSQL.Consumers.RetryStrategy
   ( -- * Delays
     constantDelay
   , exponentialDelay
-  , jitter
 
     -- * Decisions
   , RetryDecision (..)
   , retryForever
   , giveUpAfter
+  , jitter
   , retryOr
   ) where
 
-import Control.Monad.IO.Class
+import Crypto.RNG.Class
 import Data.Int
-import Data.Maybe
 import Database.PostgreSQL.Consumers.Config
 import Database.PostgreSQL.PQTypes.Interval
-import System.Random
 
 -- | The same delay before every retry.
 constantDelay
@@ -89,25 +94,25 @@ giveUpAfter maxAttempts delay attempts
   | attempts >= maxAttempts = GiveUp
   | otherwise = retryForever delay attempts
 
--- | Scale a delay by a random factor between @1 - p@ and @1 + p@, so that jobs
--- which fail together do not retry together. The result can exceed a delay
--- cap by a fraction @p@.
+-- | Scale the delay of a 'RetryAfter' by a random factor in the given range,
+-- so that jobs which fail together do not retry together. 'GiveUp' stays as
+-- it is.
 --
--- @p@ is a fraction between 0 and 1, and 0.5 (plus or minus 50%) by default.
--- That spreads retries over one full delay, like the "full jitter" of
--- <https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/>,
--- but it never gives a delay close to zero.
+-- If the delay is a minimum, e.g. a polling interval that a remote service
+-- enforces, use factors of 1 or more, such as @(1, 1.5)@. To never exceed a
+-- delay cap, use factors of 1 or less, such as @(0.5, 1)@. Negative factors
+-- count as 0.
 jitter
-  :: MonadIO m
-  => Maybe Double
-  -- ^ Plus or minus fraction of the delay; 'Nothing' means 0.5.
-  -> Interval
-  -> m Interval
-jitter mFraction delay = do
-  factor <- liftIO $ randomRIO (1 - fraction, 1 + fraction)
-  pure . microsToInterval . round $ factor * fromInteger (intervalToMicros delay)
-  where
-    fraction = max 0 . min 1 $ fromMaybe 0.5 mFraction
+  :: CryptoRNG m
+  => (Double, Double)
+  -- ^ Lowest and highest factor.
+  -> RetryDecision
+  -> m RetryDecision
+jitter _ GiveUp = pure GiveUp
+jitter (lo, hi) (RetryAfter delay) = do
+  factor <- randomR (max 0 lo, max 0 hi)
+  pure . RetryAfter . microsToInterval . round $
+    factor * fromInteger (intervalToMicros delay)
 
 -- | Turn a 'RetryDecision' into an 'Action', using the given 'Action' on
 -- 'GiveUp'.

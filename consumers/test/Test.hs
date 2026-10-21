@@ -9,6 +9,7 @@ import Control.Monad.IO.Class
 import Control.Monad.State.Strict
 import Control.Monad.Time
 import Control.Monad.Trans.Control
+import Crypto.RNG.Unsafe
 import Data.Int
 import Data.Text qualified as T
 import Data.Time
@@ -70,12 +71,18 @@ retryStrategyTest = do
   T.assertEqual "give up at limit" GiveUp (giveUpAfter 3 (constantDelay base) 3)
   T.assertEqual "retry action" (RerunAfter base) (retryOr Remove $ RetryAfter base)
   T.assertEqual "give up action" MarkProcessed (retryOr MarkProcessed GiveUp)
-  forM_ [(Nothing, 5, 15), (Just 0.1, 9, 11), (Just 5, 0, 20)] $ \(fraction, low, high) ->
-    forM_ [1 .. 20 :: Int] $ \_ -> do
-      delay <- jitter fraction $ iseconds 10
-      T.assertBool ("jitter " <> show fraction <> " within bounds: " <> show delay) $
-        delay >= iseconds low && delay <= iseconds high
-  T.assertEqual "no jitter" (iseconds 10) =<< jitter (Just 0) (iseconds 10)
+  rng <- newRNGState 0
+  runRNGT rng $ do
+    forM_ [((1, 1.5), 10, 15), ((1.5, 1), 10, 15), ((0.5, 1), 5, 10)] $ \(factors, low, high) ->
+      forM_ [1 .. 20 :: Int] $ \_ ->
+        jitter factors (RetryAfter $ iseconds 10) >>= \case
+          RetryAfter delay ->
+            liftIO . T.assertBool ("jitter " <> show factors <> " within bounds: " <> show delay) $
+              delay >= iseconds low && delay <= iseconds high
+          GiveUp -> liftIO $ T.assertFailure "jitter gave up"
+    liftIO . T.assertEqual "no jitter" (RetryAfter $ iseconds 10) =<< jitter (1, 1) (RetryAfter $ iseconds 10)
+    liftIO . T.assertEqual "negative jitter" (RetryAfter mempty) =<< jitter (-2, -1) (RetryAfter $ iseconds 10)
+    liftIO . T.assertEqual "jitter on give up" GiveUp =<< jitter (1, 1.5) GiveUp
 
 test :: IO ()
 test = do
