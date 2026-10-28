@@ -1,3 +1,17 @@
+-- | Static configuration of a consumer.
+--
+-- 'ConsumerConfig' is the contract between your application and the consumer
+-- runtime: it names the jobs table and the consumer-registry table, says how
+-- to deserialize a job, and provides the handler ('ccProcessJob') plus its
+-- exception fallback ('ccOnException'). Each invocation of 'ccProcessJob' is
+-- expected to run in its own database transaction and to be idempotent: a
+-- crashed consumer's job will be reclaimed by the monitor on another consumer
+-- and retried, so a partial side effect must be safe to re-apply.
+--
+-- The handler returns a 'Result' wrapping an 'Action'. The 'Ok' / 'Failed'
+-- distinction is purely a signal for logging and metrics; both can carry any
+-- 'Action'. If 'ccProcessJob' throws, 'ccOnException' is called with the
+-- exception and the job and returns the 'Action' directly.
 module Database.PostgreSQL.Consumers.Config
   ( Action (..)
   , Result (..)
@@ -16,13 +30,23 @@ import Database.PostgreSQL.PQTypes.SQL.Raw
 
 -- | Action to take after a job was processed.
 data Action
-  = MarkProcessed
-  | RerunAfter Interval
-  | RerunAt UTCTime
-  | Remove
+  = -- | Clear @run_at@ and stamp @finished_at@ with the current time. The
+    -- row is kept for auditing and will never be processed again.
+    MarkProcessed
+  | -- | Set @run_at@ to @NOW() + interval@. The job becomes eligible again
+    -- after the given delay.
+    RerunAfter Interval
+  | -- | Set @run_at@ to the given absolute time.
+    RerunAt UTCTime
+  | -- | Delete the row from the jobs table.
+    Remove
   deriving (Eq, Ord, Show)
 
--- | Result of processing a job.
+-- | Result of processing a job. 'Ok' and 'Failed' both carry an 'Action' and
+-- mutate the row in the same way; the distinction is a signal for logging and
+-- metrics. Typically you'd use @'Failed' ('RerunAfter' n)@ to indicate that
+-- the job was retried due to a recoverable error rather than completing
+-- normally.
 data Result = Ok Action | Failed Action
   deriving (Eq, Ord, Show)
 
@@ -57,6 +81,9 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- * __attempts__ - represents number of job processing attempts made so
   -- far. Needs to be not nullable, of type INTEGER. Initial value of a fresh
   -- job should be 0, therefore it makes sense to make the column default to 0.
+  -- The counter is incremented when the dispatcher reserves the row, so the
+  -- value visible inside 'ccProcessJob' and 'ccOnException' already includes
+  -- the currently-running attempt (i.e. it is 1 on the first run).
   , ccConsumersTable :: !(RawSQL ())
   -- ^ Name of a database table where registered consumers are stored. The table
   -- itself needs to have the following columns:
@@ -69,7 +96,8 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- with one table. Set to 'ccJobsTable'.
   --
   -- * __last_activity__ - represents the last registered activity of the
-  -- consumer. It's updated periodically by all currently running consumers
+  -- consumer. Needs to be not nullable, of a type comparable with @now()@
+  -- (TIMESTAMPTZ is recommended). It's updated periodically by all currently running consumers
   -- every 30 seconds to prove that they are indeed running. They also check for
   -- the registered consumers that didn't update their status for a minute. If
   -- any such consumers are found, they are presumed to be not working and all
@@ -93,6 +121,10 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- consumer will check for pending jobs either when notification is received
   -- or no notification is received for 'ccNotificationTimeout' microseconds
   -- since the last check.
+  --
+  -- @NOTIFY@ only fires when the transaction that issued it commits, so
+  -- enqueueing a job and notifying in the same transaction will never wake a
+  -- consumer for a row it cannot yet see.
   , ccNotificationTimeout :: !Int
   -- ^ Timeout of checking for any pending jobs (@'run_at <= NOW()'@), in
   -- microseconds. The consumer checks the database for any pending jobs after
@@ -106,15 +138,22 @@ data ConsumerConfig m idx job = forall row. FromRow row => ConsumerConfig
   -- retried, you can set it to -1, then listening will never timeout. Otherwise
   -- it needs to be a positive number.
   , ccMaxRunningJobs :: !Int
-  -- ^ Maximum amount of jobs that can be processed in parallel.
+  -- ^ Maximum amount of jobs that can be processed in parallel by this
+  -- consumer process. To scale beyond a single process, run multiple
+  -- consumers against the same jobs table: reservation uses
+  -- @SELECT … FOR UPDATE SKIP LOCKED@, so peers never block each other and
+  -- each job is handed to exactly one consumer.
   , ccProcessJob :: !(job -> m Result)
   -- ^ Function that processes a job. It's recommended to process each job in a
   -- separate DB transaction, otherwise you'll have to remember to commit your
   -- changes to the database manually.
   , ccOnException :: !(SomeException -> job -> m Action)
-  -- ^ Action taken if a job processing function throws an exception. For
-  -- robustness it's best to ensure that it doesn't throw. If it does, the
-  -- exception will be logged and the job in question postponed by a day.
+  -- ^ Action taken if a job processing function throws an exception. No
+  -- backoff schedule is imposed: inspect the job's @attempts@ column to
+  -- compute whatever retry policy you want (linear, exponential, capped,
+  -- give-up-after-N, etc.). For robustness it's best to ensure that this
+  -- handler itself doesn't throw. If it does, the exception will be logged
+  -- and the job in question postponed by a day.
   , ccJobLogData :: !(job -> [A.Pair])
   -- ^ Data to attach to each log message while processing a job.
   }

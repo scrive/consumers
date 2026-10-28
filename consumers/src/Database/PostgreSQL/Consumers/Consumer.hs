@@ -1,3 +1,15 @@
+-- | Consumer-registry bookkeeping.
+--
+-- Every running consumer owns a row in the consumers table identified by a
+-- 'ConsumerID'. That row serves two purposes: it is the value written into a
+-- job's @reserved_by@ column when the consumer claims the job, and it carries
+-- a @last_activity@ timestamp that the monitor thread updates as a heartbeat.
+-- If a consumer's heartbeat goes stale (more than 60 seconds old) another
+-- consumer's monitor will reclaim its reserved jobs and delete the row.
+--
+-- 'runConsumer' takes care of calling 'registerConsumer' at startup and
+-- 'unregisterConsumer' at shutdown; the functions are exposed for callers
+-- that want to drive the lifecycle manually.
 module Database.PostgreSQL.Consumers.Consumer
   ( ConsumerID
   , registerConsumer
@@ -46,7 +58,9 @@ registerConsumer ConsumerConfig {..} cs = runDBT cs defaultTransactionSettings $
       ]
   fetchOne runIdentity
 
--- | Unregister consumer with a given ID.
+-- | Unregister a consumer. Releases any jobs still reserved by it (so they
+-- become eligible for processing again) and removes the consumer row from
+-- the registry.
 unregisterConsumer
   :: (MonadBase IO m, MonadMask m)
   => ConsumerConfig n idx job
