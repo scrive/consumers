@@ -67,7 +67,7 @@ defaultConsumerMetricsConfig =
 -- # HELP consumers_job_execution_seconds Execution time of jobs in seconds, by job_name, includes the job_result
 -- # TYPE consumers_job_execution_seconds histogram
 --
--- # HELP consumers_job_failed_attempts Number of processing attempts made so far by jobs whose execution didn't succeed, by job_name
+-- # HELP consumers_job_failed_attempts Attempt count at each failed run, by job_name
 -- # TYPE consumers_job_failed_attempts histogram
 --
 -- # HELP consumers_jobs_reserved_total The total number of job reserved, by job_name
@@ -131,7 +131,7 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
       $ Prom.histogram
         Prom.Info
           { metricName = "consumers_job_failed_attempts"
-          , metricHelp = "Number of processing attempts made so far by jobs whose execution didn't succeed, by job_name"
+          , metricHelp = "Attempt count at each failed run, by job_name"
           }
         jobFailedAttemptsBuckets
   pure $ ConsumerMetrics {..}
@@ -279,7 +279,8 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
             ExitCaseException _ -> "exception"
             ExitCaseAbort -> "abort"
       liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
-      -- Successful jobs would flood the histogram with "attempt 1".
+      -- Only failed runs are recorded. Successful runs would add an "attempt 1"
+      -- observation for every job.
       case jobExit of
         ExitCaseSuccess (Ok _) -> pure ()
         _ ->

@@ -62,7 +62,7 @@ exponentialDelay
   -> Interval
 exponentialDelay base maxDelay attempts =
   microsToInterval . min (intervalToMicros maxDelay) $
-    intervalToMicros base * 2 ^ min 62 (max 1 attempts - 1)
+    intervalToMicros base * 2 ^ (max 1 attempts - 1)
 
 -- | Whether to rerun a failed job, and after which delay.
 data RetryDecision

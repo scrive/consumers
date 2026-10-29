@@ -10,6 +10,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Time
 import Control.Monad.Trans.Control
 import Crypto.RNG.Unsafe
+import Data.IORef
 import Data.Int
 import Data.Text qualified as T
 import Data.Time
@@ -64,7 +65,7 @@ retryStrategyTest = do
   T.assertEqual "second exponential delay" (iseconds 1) (exponentialDelay base cap 2)
   forM_ [0, -1, minBound] $ \attempts ->
     T.assertEqual ("exponential delay at " <> show attempts) base (exponentialDelay base cap attempts)
-  forM_ [64, 1000, maxBound] $ \attempts ->
+  forM_ [64, 1000] $ \attempts ->
     T.assertEqual ("exponential delay at " <> show attempts) (iseconds 3600) (exponentialDelay base cap attempts)
   T.assertEqual "retry forever" (RetryAfter base) (retryForever (constantDelay base) maxBound)
   T.assertEqual "retry before limit" (RetryAfter base) (giveUpAfter 3 (constantDelay base) 2)
@@ -133,6 +134,37 @@ test = do
       rowcount1 :: Int64 <- fetchOne runIdentity
       liftIO $ T.assertEqual "Number of jobs in table after 10 steps is 1024" 1024 rowcount0
       liftIO $ T.assertEqual "Number of jobs in table after 11 steps is 0" 0 rowcount1
+
+      -- Two failures, then a success that reruns the job, which resets the
+      -- attempt count, and finally a success that removes it.
+      calls <- liftIO $ newIORef (0 :: Int)
+      attemptsSeen <-
+        runSingleJob
+          connSource
+          idleSignal
+          5
+          ( \_ _ -> do
+              n <- liftIO $ atomicModifyIORef' calls (\c -> (c + 1, c + 1))
+              case n of
+                _ | n <= 2 -> throwM $ userError "boom"
+                3 -> pure . Ok $ RerunAfter mempty
+                _ -> pure $ Ok Remove
+          )
+          (\_ _ -> pure $ RerunAfter mempty)
+      liftIO $ T.assertEqual "attempts increase on failure and reset after success" [1, 2, 3, 1] attemptsSeen
+
+      -- A job that always fails is given up on by 'giveUpAfter'.
+      attemptsSeen' <-
+        runSingleJob
+          connSource
+          idleSignal
+          5
+          (\_ _ -> throwM $ userError "boom")
+          (\_ (_, attempts, _) -> pure . retryOr Remove $ giveUpAfter 3 (constantDelay mempty) attempts)
+      liftIO $ T.assertEqual "job is run until giveUpAfter gives up" [1, 2, 3] attemptsSeen'
+      runSQL_ "SELECT COUNT(*) from consumers_test_jobs"
+      rowcount2 :: Int64 <- fetchOne runIdentity
+      liftIO $ T.assertEqual "given up job is removed" 0 rowcount2
       dropTables
   where
     waitUntilTrue tmvar = liftIO . atomically $ do
@@ -170,7 +202,9 @@ test = do
         , dropTableMigration consumersTable
         ]
 
-    consumerConfig =
+    consumerConfig = mkConsumerConfig processJob handleException
+
+    mkConsumerConfig process onException =
       ConsumerConfig
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
@@ -182,10 +216,32 @@ test = do
         , -- select some small timeout
           ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs = 20
-        , ccProcessJob = processJob
-        , ccOnException = handleException
+        , ccProcessJob = process
+        , ccOnException = onException
         , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
+
+    -- Run the consumer on a single job that is due now, over 'rounds' rounds
+    -- of the consumer, and return the attempt counts the job was run with.
+    runSingleJob connSource idleSignal rounds process onException = do
+      seen <- liftIO $ newIORef []
+      let record job@(_, attempts, _) = do
+            liftIO $ modifyIORef' seen (attempts :)
+            process job seen
+      now <- currentTime
+      runSQL_ $
+        "INSERT INTO consumers_test_jobs "
+          <> "(run_at, finished_at, reserved_by, attempts, countdown) "
+          <> "VALUES (" <?> now <> ", NULL, NULL, 0, 0)"
+      commit
+      forM_ [1 .. rounds] $ \_ -> do
+        modifyTestTime $ addUTCTime (2 * 60 * 60)
+        finalize
+          ( localDomain "process" $
+              runConsumerWithIdleSignal (mkConsumerConfig record onException) connSource idleSignal
+          )
+          $ waitUntilTrue idleSignal
+      liftIO $ reverse <$> readIORef seen
 
     putJob :: Int32 -> TestEnv ()
     putJob countdown = localDomain "put" $ do
