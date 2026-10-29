@@ -232,7 +232,8 @@ test = do
       runSQL_ $
         "INSERT INTO consumers_test_jobs "
           <> "(run_at, finished_at, reserved_by, attempts, countdown) "
-          <> "VALUES (" <?> now <> ", NULL, NULL, 0, 0)"
+          <> "VALUES (" <?> now
+          <> ", NULL, NULL, 0, 0)"
       commit
       forM_ [1 .. rounds] $ \_ -> do
         modifyTestTime $ addUTCTime (2 * 60 * 60)
