@@ -14,6 +14,7 @@ import Control.Monad.IO.Class
 import Data.Int
 import Data.Text qualified as T
 import Database.PostgreSQL.Consumers
+import Database.PostgreSQL.Consumers.RetryStrategy
 import Database.PostgreSQL.PQTypes
 import Database.PostgreSQL.PQTypes.Checks
 import Database.PostgreSQL.PQTypes.Model
@@ -101,15 +102,16 @@ main = do
       ConsumerConfig
         { ccJobsTable = "consumers_example_jobs"
         , ccConsumersTable = "consumers_example_consumers"
-        , ccJobSelectors = ["id", "message"]
+        , ccJobSelectors = ["id", "attempts", "message"]
         , ccJobFetcher = id
-        , ccJobIndex = \(i :: Int64, _msg :: T.Text) -> i
+        , ccJobIndex = \(i :: Int64, _attempts :: Int32, _msg :: T.Text) -> i
+        , ccJobAttempts = \(_i, attempts, _msg) -> attempts
         , ccNotificationChannel = Just "consumers_example_chan"
         , ccNotificationTimeout = 10 * 1000000 -- 10 sec
         , ccMaxRunningJobs = 1
         , ccProcessJob = processJob
         , ccOnException = handleException
-        , ccJobLogData = \(i, _) -> ["job_id" .= i]
+        , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
 
     -- Add a job to the consumer's queue.
@@ -124,16 +126,21 @@ main = do
       commit
 
     -- Invoked when a job is ready to be processed.
-    processJob :: (Int64, T.Text) -> AppM Result
-    processJob (_idx, msg) = do
+    processJob :: (Int64, Int32, T.Text) -> AppM Result
+    processJob (_idx, _attempts, msg) = do
       logInfo_ msg
       pure (Ok Remove)
 
     -- Invoked when 'processJob' throws an exception. Can handle
     -- failure in different ways, such as: remove the job from the
     -- queue, mark it as processed, or schedule it for rerun.
-    handleException :: SomeException -> (Int64, T.Text) -> AppM Action
-    handleException _ _ = pure . RerunAfter $ imicroseconds 500000
+    --
+    -- Here: remove the job after 5 attempts, otherwise retry with a delay
+    -- that doubles each time, capped at 10 seconds.
+    handleException :: SomeException -> (Int64, Int32, T.Text) -> AppM Action
+    handleException _ (_idx, attempts, _msg) =
+      pure . retryOr Remove $
+        giveUpAfter 5 (exponentialDelay (imicroseconds 500000) (iseconds 10)) attempts
 
 -- | Table where jobs are stored. See
 -- 'Database.PostgreSQL.Consumers.Config.ConsumerConfig'.

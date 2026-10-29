@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               consumers
-version:            2.3.5.0
+version:            2.4.0.0
 synopsis:           Concurrent PostgreSQL data consumers
 
 description:        Library for setting up concurrent consumers of data
@@ -51,11 +51,13 @@ library
                     Database.PostgreSQL.Consumers.Config,
                     Database.PostgreSQL.Consumers.Consumer,
                     Database.PostgreSQL.Consumers.Components,
+                    Database.PostgreSQL.Consumers.RetryStrategy,
                     Database.PostgreSQL.Consumers.Utils
 
   build-depends:    base              >= 4.16   && < 5
                   , aeson             >= 2.0
                   , containers        >= 0.5
+                  , crypto-rng        >= 0.3.0.2
                   , exceptions        >= 0.10
                   , hpqtypes          >= 1.13
                   , lifted-base       >= 0.2
@@ -96,6 +98,7 @@ test-suite consumers-test
 
   build-depends:      base,
                       consumers,
+                      crypto-rng,
                       exceptions,
                       HUnit >= 1.6,
                       hpqtypes >= 1.15.0.0,
