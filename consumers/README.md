@@ -1,6 +1,6 @@
 # consumers
 
-[![CI](https://github.com/scrive/consumers/actions/workflows/haskell-gha.yml/badge.svg?branch=master)](https://github.com/scrive/consumers/actions/workflows/haskell-gha.yml)
+[![CI](https://github.com/scrive/consumers/actions/workflows/haskell-gha.yaml/badge.svg?branch=master)](https://github.com/scrive/consumers/actions/workflows/haskell-gha.yaml)
 [![Hackage version](https://img.shields.io/hackage/v/consumers.svg?label=Hackage)](https://hackage.haskell.org/package/consumers)
 
 Library for setting up concurrent consumers of data stored inside
