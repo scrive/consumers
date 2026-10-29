@@ -204,7 +204,7 @@ test = do
 
     consumerConfig = mkConsumerConfig processJob handleException
 
-    mkConsumerConfig process onException =
+    mkConsumerConfig process onEx =
       ConsumerConfig
         { ccJobsTable = "consumers_test_jobs"
         , ccConsumersTable = "consumers_test_consumers"
@@ -217,13 +217,13 @@ test = do
           ccNotificationTimeout = 100 * 1000 -- 100 msec
         , ccMaxRunningJobs = 20
         , ccProcessJob = process
-        , ccOnException = onException
+        , ccOnException = onEx
         , ccJobLogData = \(i, _, _) -> ["job_id" .= i]
         }
 
     -- Run the consumer on a single job that is due now, over 'rounds' rounds
     -- of the consumer, and return the attempt counts the job was run with.
-    runSingleJob connSource idleSignal rounds process onException = do
+    runSingleJob connSource idleSignal (rounds :: Int) process onEx = do
       seen <- liftIO $ newIORef []
       let record job@(_, attempts, _) = do
             liftIO $ modifyIORef' seen (attempts :)
@@ -239,7 +239,7 @@ test = do
         modifyTestTime $ addUTCTime (2 * 60 * 60)
         finalize
           ( localDomain "process" $
-              runConsumerWithIdleSignal (mkConsumerConfig record onException) connSource idleSignal
+              runConsumerWithIdleSignal (mkConsumerConfig record onEx) connSource idleSignal
           )
           $ waitUntilTrue idleSignal
       liftIO $ reverse <$> readIORef seen
