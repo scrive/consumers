@@ -55,3 +55,35 @@ library
                   , prometheus-client >= 1.1.0
 
   hs-source-dirs:   src
+
+test-suite consumers-metrics-prometheus-test
+  import:             language
+
+  ghc-options:        -threaded
+
+  build-depends:      base,
+                      bytestring,
+                      consumers,
+                      consumers-metrics-prometheus,
+                      exceptions,
+                      HUnit >= 1.6,
+                      hpqtypes >= 1.15.0.0,
+                      hpqtypes-extras >= 1.19.0.0,
+                      log-base,
+                      monad-control,
+                      monad-time,
+                      prometheus-client,
+                      text,
+                      time,
+                      transformers-base
+
+  default-extensions: GeneralizedNewtypeDeriving
+                    , LambdaCase
+                    , MultiParamTypeClasses
+                    , TypeFamilies
+                    , UndecidableInstances
+
+  hs-source-dirs:     test
+
+  type:               exitcode-stdio-1.0
+  main-is:            Test.hs

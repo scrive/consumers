@@ -131,7 +131,7 @@ jobs:
     # create and drop the table table_versions of hpqtypes-extras.
     - name: Create the test databases
       run: |
-        for db in consumers_test consumers_example; do
+        for db in consumers_test consumers_example consumers_metrics_test; do
           docker exec ${{ job.services.postgres.id }} psql -U postgres -c "CREATE DATABASE $db"
         done
 
