@@ -21,7 +21,7 @@ import Control.Monad.Base
 import Control.Monad.Catch (ExitCase (..))
 import Control.Monad.Time
 import Control.Monad.Trans.Control
-import Database.PostgreSQL.Consumers (ConsumerConfig (..), Result (..), runConsumer)
+import Database.PostgreSQL.Consumers (Action (..), ConsumerConfig (..), Result (..), runConsumer)
 import Database.PostgreSQL.PQTypes
 import Log
 import Prometheus qualified as Prom
@@ -35,7 +35,9 @@ data ConsumerMetricsConfig = ConsumerMetricsConfig
   -- ^ Buckets to use for the 'jobsFailedAttempts' histogram. Keep a @1@
   -- bucket so that one-off failures are counted apart from repeated ones.
   , collectDegradeThresholdSeconds :: Double
-  -- ^ @logAttention@ and graceful degrade if collection takes longer than @x@ seconds
+  -- ^ @logAttention@ and graceful degrade if the collection queries take
+  -- longer than @x@ seconds in total, or if the whole collection, including
+  -- the wait for a pool connection, takes longer than @10 * x@ seconds.
   , collectDegradeSeconds :: Int
   -- ^ Degraded collection interval in seconds
   }
@@ -64,7 +66,7 @@ defaultConsumerMetricsConfig =
 -- | Metrics store for the following Prometheus metrics:
 --
 -- @
--- # HELP consumers_job_execution_seconds Execution time of jobs in seconds, by job_name, includes the job_result
+-- # HELP consumers_job_execution_seconds Execution time of jobs in seconds, by job_name, includes the job_result and job_action
 -- # TYPE consumers_job_execution_seconds histogram
 --
 -- # HELP consumers_job_failed_attempts Attempt count at each failed run, by job_name
@@ -76,6 +78,9 @@ defaultConsumerMetricsConfig =
 -- # HELP consumers_jobs_overdue The current number of jobs overdue, by job_name
 -- # TYPE consumers_jobs_overdue gauge
 --
+-- # HELP consumers_jobs_scheduled The current number of jobs scheduled to run in the future, by job_name
+-- # TYPE consumers_jobs_scheduled gauge
+--
 -- # HELP consumers_job_info The number of workers registered for a given job_name
 -- # TYPE consumers_job_info gauge
 -- @
@@ -85,8 +90,9 @@ data ConsumerMetrics = ConsumerMetrics
   , collectDegradeSeconds :: Int
   , jobInfo :: Prom.Vector Prom.Label1 Prom.Gauge
   , jobsOverdue :: Prom.Vector Prom.Label1 Prom.Gauge
+  , jobsScheduled :: Prom.Vector Prom.Label1 Prom.Gauge
   , jobsReserved :: Prom.Vector Prom.Label1 Prom.Counter
-  , jobsExecution :: Prom.Vector Prom.Label2 Prom.Histogram
+  , jobsExecution :: Prom.Vector Prom.Label3 Prom.Histogram
   , jobsFailedAttempts :: Prom.Vector Prom.Label1 Prom.Histogram
   }
 
@@ -108,6 +114,14 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
           { metricName = "consumers_jobs_overdue"
           , metricHelp = "The current number of jobs overdue, by job_name"
           }
+  jobsScheduled <-
+    Prom.register
+      . Prom.vector "job_name"
+      $ Prom.gauge
+        Prom.Info
+          { metricName = "consumers_jobs_scheduled"
+          , metricHelp = "The current number of jobs scheduled to run in the future, by job_name"
+          }
   jobsReserved <-
     Prom.register
       . Prom.vector "job_name"
@@ -118,11 +132,11 @@ registerConsumerMetrics ConsumerMetricsConfig {..} = liftBase $ do
           }
   jobsExecution <-
     Prom.register
-      . Prom.vector ("job_name", "job_result")
+      . Prom.vector ("job_name", "job_result", "job_action")
       $ Prom.histogram
         Prom.Info
           { metricName = "consumers_job_execution_seconds"
-          , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result"
+          , metricHelp = "Execution time of jobs in seconds, by job_name, includes the job_result and job_action"
           }
         jobExecutionBuckets
   jobsFailedAttempts <-
@@ -198,22 +212,32 @@ runMetricsCollection connSource metrics@ConsumerMetrics {..} config = localDomai
     collect = do
       logInfo_ "Collecting consumer metrics"
       t1 <- monotonicTime
-      collectMetrics connSource metrics config
+      queryTime <- collectMetrics connSource metrics config
       t2 <- monotonicTime
-      let runtime = t2 - t1
-      -- Graceful degrade if things take too long
-      if runtime < collectDegradeThresholdSeconds
-        then pure collectSeconds
-        else do
-          logAttention "Consumer metrics collection took long" $
-            object
-              [ "runtime" .= runtime
-              , "threshold" .= collectDegradeThresholdSeconds
-              , "rerun_seconds" .= collectDegradeSeconds
-              ]
-          pure collectDegradeSeconds
+      degrade queryTime (t2 - t1)
 
--- | Collect and report "queue" metrics for a given configuration
+    -- Graceful degrade if the queries take too long. The runtime also
+    -- includes the wait for a pool connection, so it has a looser threshold.
+    degrade queryTime runtime
+      | queryTime >= collectDegradeThresholdSeconds = do
+          logAttention "Consumer metrics collection took long" $ object details
+          pure collectDegradeSeconds
+      | runtime >= runtimeThreshold = do
+          logAttention "Consumer metrics collection waited long" $ object details
+          pure collectDegradeSeconds
+      | otherwise = pure collectSeconds
+      where
+        runtimeThreshold = 10 * collectDegradeThresholdSeconds
+        details =
+          [ "query_time" .= queryTime
+          , "runtime" .= runtime
+          , "threshold" .= collectDegradeThresholdSeconds
+          , "runtime_threshold" .= runtimeThreshold
+          , "rerun_seconds" .= collectDegradeSeconds
+          ]
+
+-- | Collect and report "queue" metrics for a given configuration.
+-- Returns the time spent executing queries, in seconds.
 collectMetrics
   :: ( MonadBaseControl IO m
      , MonadMask m
@@ -222,8 +246,8 @@ collectMetrics
   => ConnectionSourceM m
   -> ConsumerMetrics
   -> ConsumerConfig m idx job
-  -> m ()
-collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccConsumersTable} = runDBT connSource defaultTransactionSettings $ do
+  -> m Double
+collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccConsumersTable} = runDBT connSource ts $ do
   let jobName = unRawSQL ccJobsTable
 
   info <- do
@@ -234,13 +258,31 @@ collectMetrics connSource ConsumerMetrics {..} ConsumerConfig {ccJobsTable, ccCo
     fetchOne runIdentity
   liftBase $ Prom.withLabel jobInfo jobName (`Prom.setGauge` info)
 
-  overdue <- do
+  -- Both counts are range scans on an index on run_at, which the consumer
+  -- needs anyway to reserve jobs. The scheduled count has no reserved_by
+  -- condition, because a reserved job always has run_at in the past: the
+  -- consumer reserves only jobs with run_at <= now and sets run_at together
+  -- with reserved_by = NULL when it releases them. Without a column from the
+  -- heap, the planner can use an index-only scan for it.
+  (overdue, scheduled) <- do
     runSQL_ $
-      "SELECT count(id)::float8 FROM "
+      "SELECT"
+        <> " (SELECT count(*)::float8 FROM "
         <> raw ccJobsTable
-        <> " WHERE run_at <= now() AND reserved_by IS NULL"
-    fetchOne runIdentity
+        <> " WHERE run_at <= now() AND reserved_by IS NULL)"
+        <> ", (SELECT count(*)::float8 FROM "
+        <> raw ccJobsTable
+        <> " WHERE run_at > now())"
+    fetchOne id
   liftBase $ Prom.withLabel jobsOverdue jobName (`Prom.setGauge` overdue)
+  liftBase $ Prom.withLabel jobsScheduled jobName (`Prom.setGauge` scheduled)
+
+  statsTime <$> getConnectionStats
+  where
+    -- The counts do not need one snapshot, so skip the transaction and hold
+    -- a connection only while a query runs. This removes two round trips and
+    -- frees the connection between queries.
+    ts = defaultTransactionSettings {tsConnectionAcquisitionMode = AcquireOnDemand}
 
 -- | Alter a configuration to collect "job" metrics on 'ccProcessJob'
 instrumentConsumerConfig
@@ -278,7 +320,14 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
             ExitCaseSuccess (Failed _) -> "failed"
             ExitCaseException _ -> "exception"
             ExitCaseAbort -> "abort"
-      liftBase $ Prom.withLabel jobsExecution (jobName, resultLabel) (`Prom.observe` duration)
+          actionLabel = case jobExit of
+            ExitCaseSuccess (Ok action) -> actionToLabel action
+            ExitCaseSuccess (Failed action) -> actionToLabel action
+            -- No action exists when the job throws or aborts.
+            ExitCaseException _ -> "none"
+            ExitCaseAbort -> "none"
+      liftBase $
+        Prom.withLabel jobsExecution (jobName, resultLabel, actionLabel) (`Prom.observe` duration)
       -- Only failed runs are recorded. Successful runs would add an "attempt 1"
       -- observation for every job.
       case jobExit of
@@ -288,3 +337,9 @@ instrumentConsumerConfig ConsumerMetrics {..} ConsumerConfig {..} =
             Prom.withLabel jobsFailedAttempts jobName (`Prom.observe` fromIntegral (ccJobAttempts job))
 
     handleEx e = logAttention "Exception while instrumenting job" $ object ["exception" .= show e]
+
+    actionToLabel action = case action of
+      MarkProcessed -> "mark_processed"
+      RerunAfter _ -> "rerun_after"
+      RerunAt _ -> "rerun_at"
+      Remove -> "remove"
